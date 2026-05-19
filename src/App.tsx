@@ -37,16 +37,11 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { getMenus } from "./api/menu";
+import { Product } from "./types/api";
 
 // --- Types ---
-interface MenuItem {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  image: string;
-  category: string;
-}
+type MenuItem = Product;
 
 interface CartItem extends MenuItem {
   quantity: number;
@@ -331,6 +326,7 @@ const GESTURE_GUIDE = [
 ];
 
 export default function App() {
+  const [menuItems, setMenuItems] = useState<Product[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0].id);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -346,6 +342,21 @@ export default function App() {
   const [showGestureHelp, setShowGestureHelp] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showPrintNotification, setShowPrintNotification] = useState(false);
+
+  // Fetch menus from API
+  useEffect(() => {
+    const fetchMenus = async () => {
+      try {
+        const data = await getMenus();
+        // Set displayed items only if you want, but user request implies all items in the array are used.
+        // Usually we filter by 'displayed: 1' if that's what the flag means.
+        setMenuItems(data);
+      } catch (error) {
+        console.error("Failed to fetch menus:", error);
+      }
+    };
+    fetchMenus();
+  }, []);
 
   // Hand tracking hook
   const { videoRef, canvasRef, cursorRef, isModelLoaded } = useHandTracking();
@@ -414,12 +425,12 @@ export default function App() {
   }, [isCheckoutOpen, cart.length]);
 
   const filteredItems = useMemo(() => 
-    MENU_ITEMS.filter(item => item.category === activeCategory),
-    [activeCategory]
+    menuItems.filter(item => item.category.toLowerCase() === activeCategory.toLowerCase()),
+    [activeCategory, menuItems]
   );
 
   const cartTotal = useMemo(() => 
-    cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    cart.reduce((sum, item) => sum + parseFloat(item.price) * item.quantity, 0),
     [cart]
   );
   
@@ -745,14 +756,14 @@ export default function App() {
                         <CardContent className="p-0 flex flex-col h-full">
                           <div className="aspect-[4/3] w-full overflow-hidden relative shrink-0">
                             <img 
-                              src={item.image} 
+                              src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
                               alt={item.name} 
                               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                               referrerPolicy="no-referrer"
                             />
                             <div className="absolute top-2 right-2 border-2 border-white/20 rounded-xl overflow-hidden">
                               <Badge className="bg-white/95 text-stone-900 backdrop-blur-md text-sm px-3 py-1.5 border-none font-black shadow-lg">
-                                Rp {item.price.toLocaleString('id-ID')}
+                                Rp {parseFloat(item.price).toLocaleString('id-ID')}
                               </Badge>
                             </div>
                           </div>
@@ -835,7 +846,7 @@ export default function App() {
                       >
                         <div className="relative w-24 h-24 rounded-lg overflow-hidden shadow-sm shrink-0">
                           <img 
-                            src={item.image} 
+                            src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
                             alt={item.name} 
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                             referrerPolicy="no-referrer"
@@ -846,7 +857,7 @@ export default function App() {
                         </div>
                         <div className="flex flex-col justify-center flex-1 min-w-0 pr-1">
                           <p className="text-lg font-black text-stone-800 truncate uppercase tracking-tight leading-tight">{item.name}</p>
-                          <p className="text-base text-orange-600 font-bold mt-1">Rp {(item.price * item.quantity).toLocaleString('id-ID')}</p>
+                          <p className="text-base text-orange-600 font-bold mt-1">Rp {(parseFloat(item.price) * item.quantity).toLocaleString('id-ID')}</p>
                           
                           <div className="flex items-center gap-3 mt-3 bg-white rounded-xl p-1.5 border border-stone-200/50 w-max shadow-sm">
                             <button 
@@ -895,7 +906,7 @@ export default function App() {
             <div className="flex flex-col md:flex-row h-full">
               <div className="w-full md:w-1/2 aspect-square md:aspect-auto overflow-hidden">
                 <img 
-                  src={selectedItem.image} 
+                  src={selectedItem.image_url ? `http://localhost:5000${selectedItem.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
                   alt={selectedItem.name} 
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
@@ -928,7 +939,7 @@ export default function App() {
                   </p>
                   
                   <div className="text-5xl font-black text-stone-900 italic tracking-tighter">
-                    Rp {selectedItem.price.toLocaleString('id-ID')}
+                    Rp {parseFloat(selectedItem.price).toLocaleString('id-ID')}
                   </div>
                 </div>
                 
@@ -983,11 +994,11 @@ export default function App() {
                           {cart.map((item) => (
                             <div key={item.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-6 p-6 bg-stone-50 rounded-[24px] border border-stone-100">
                               <div className="w-24 h-24 rounded-xl overflow-hidden shadow-sm shrink-0">
-                                <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                                <img src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} alt={item.name} className="w-full h-full object-cover" />
                               </div>
                               <div className="min-w-0">
                                 <p className="text-xl font-black text-stone-800 uppercase tracking-tight leading-tight truncate">{item.name}</p>
-                                <p className="text-base text-stone-500 font-bold mt-1">Rp {item.price.toLocaleString('id-ID')}</p>
+                                <p className="text-base text-stone-500 font-bold mt-1">Rp {parseFloat(item.price).toLocaleString('id-ID')}</p>
                               </div>
                               <div className="flex items-center gap-3 bg-white rounded-[16px] p-1.5 border-2 border-stone-200 w-max shadow-sm shrink-0 h-max">
                                 <button 
@@ -1013,7 +1024,7 @@ export default function App() {
                               </div>
                               <div className="w-48 text-right shrink-0">
                                 <span className="text-stone-400 font-black uppercase tracking-[0.15em] text-[10px] block mb-1">Subtotal</span>
-                                <p className="text-2xl font-black text-orange-600">Rp {(item.price * item.quantity).toLocaleString('id-ID')}</p>
+                                <p className="text-2xl font-black text-orange-600">Rp {(parseFloat(item.price) * item.quantity).toLocaleString('id-ID')}</p>
                               </div>
                             </div>
                           ))}
@@ -1195,9 +1206,9 @@ export default function App() {
                                 <div key={item.id} className="flex justify-between items-center group">
                                   <div>
                                     <p className="font-bold text-2xl text-stone-800 group-hover:text-orange-600 transition-colors uppercase">{item.name}</p>
-                                    <p className="text-lg text-stone-400 mt-1">{item.quantity}x Rp {item.price.toLocaleString('id-ID')}</p>
+                                    <p className="text-lg text-stone-400 mt-1">{item.quantity}x Rp {parseFloat(item.price).toLocaleString('id-ID')}</p>
                                   </div>
-                                  <p className="font-black text-2xl text-stone-900">Rp {(item.price * item.quantity).toLocaleString('id-ID')}</p>
+                                  <p className="font-black text-2xl text-stone-900">Rp {(parseFloat(item.price) * item.quantity).toLocaleString('id-ID')}</p>
                                 </div>
                               ))}
                             </div>
