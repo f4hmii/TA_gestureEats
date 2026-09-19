@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# File lokal berisi kredensial / eksperimen (jangan di-commit)
+scratch/
+dev/
+test-api.cjs
+test-fetch.mjs
+test-fetch.ts
+test-headers.mjs
+tsconfig.tsbuildinfo
+
+# Sisa kredensial cadangan
+*.deleted.*

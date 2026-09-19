@@ -126,6 +126,18 @@
     }
   html {
     @apply font-sans;
+    /* ============================================================
+       KIOSK MONITOR 42 INCH - RESPONSIVE SCALING
+       Target utama: 1920×1080 (Full HD) & 3840×2160 (4K)
+       
+       Cara kerja:
+       - font-size = 0.833vw → di 1920px = 16px (100% desain)
+       - Di 4K 3840px = 20px (scale up, baik untuk layar besar)
+       - Di laptop 1280px = ~10.67px (scale down proporsional)
+       
+       Semua nilai Tailwind (rem-based) otomatis ikut scale.
+       ============================================================ */
+    font-size: clamp(10px, 0.833vw, 20px);
     }
 }
 
@@ -133,4 +145,71 @@
   0% { transform: translateY(-150px); }
   50% { transform: translateY(150px); }
   100% { transform: translateY(-150px); }
+}
+
+/* ============================================================
+   KIOSK 42" HYBRID RESPONSIVE OVERRIDES
+   
+   Override elemen yang menggunakan px/ukuran fixed (bukan rem)
+   agar tetap proporsional di semua resolusi monitor.
+   ============================================================ */
+
+/* ── Sidebar kiri & kanan ── */
+aside {
+  /* Lebar sidebar: 5vw → di 1920px = 96px, di 4K = 192px */
+  width: clamp(64px, 5vw, 120px) !important;
+  flex-shrink: 0;
+}
+
+/* ── Footer keranjang ── */
+footer {
+  /* Tinggi: 22vh → di 1080px ≈ 237px, di 1440px ≈ 316px */
+  height: clamp(160px, 22vh, 380px) !important;
+  padding: clamp(12px, 1.5vw, 32px) !important;
+}
+
+/* ── Header ── */
+header {
+  padding-top: clamp(8px, 1vh, 20px) !important;
+  padding-bottom: clamp(8px, 1vh, 20px) !important;
+  padding-left: clamp(12px, 1.5vw, 32px) !important;
+  padding-right: clamp(12px, 1.5vw, 32px) !important;
+}
+
+/* ── QRIS barcode ── */
+.w-\[720px\] {
+  width: clamp(280px, 36vw, 720px) !important;
+}
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6d3d1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a29e;
+}
+
+/* ── Tombol-tombol besar di checkout ──
+   Tailwind h-32 = 8rem → sudah auto-scale via html font-size.
+   Override ini untuk viewport yang sangat kecil saja. */
+.h-32 {
+  height: clamp(52px, 8vh, 128px) !important;
+}
+
+/* ── Tombol medium h-24 (cetak struk, selesai) ── */
+.h-24 {
+  height: clamp(44px, 6.5vh, 96px) !important;
+}
+
+/* ── Tombol kartu produk h-16 ── */
+.h-16 {
+  height: clamp(36px, 5vh, 64px) !important;
 }

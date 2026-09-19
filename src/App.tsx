@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  ShoppingBasket, 
-  Plus, 
-  Minus, 
-  ChevronRight, 
-  Utensils, 
-  Coffee, 
-  Pizza as PizzaIcon, 
+import {
+  ShoppingBasket,
+  Plus,
+  Minus,
+  ChevronRight,
+  Utensils,
+  Coffee,
+  Pizza as PizzaIcon,
   IceCream,
   Trash2,
   CheckCircle2,
@@ -20,7 +21,12 @@ import {
   Ticket,
   ScanBarcode,
   Barcode,
-  Printer
+  Printer,
+  ThumbsUp,
+  HandFist,
+  Loader2,
+  AlertCircle,
+  Camera
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,11 +43,51 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { getMenus } from "./api/menu";
-import { Product } from "./types/api";
+import { getActiveMenus, isMenuAvailable } from "./api/menu";
+import { Product, User, Promotion, CoinPromo, AdminPromo } from "./types/api";
+import { getPromotions, scanTag, getCoinPromos, createTangolabOrder, redeemCoinPromo, getAdminPromos, uploadPaymentProof, outletOfItem, apiPrefixForOutlet, buildOrderPayload } from "./api/tangolab";
+import {
+  getActiveMedia,
+  pingScreen,
+  DIGITAL_BOARD_API_BASE,
+  DigitalBoardMedia,
+} from "./api/digitalBoard";
 
 // --- Types ---
 type MenuItem = Product;
+
+// --- Helper ---
+// BASE_URL kosong agar gambar relatif melewati Vite proxy (proxy → 192.168.1.10:3000)
+const BASE_URL = '';
+
+const resolveImageUrl = (item: MenuItem): string => {
+  const img = item.image || item.image_url;
+  if (!img) {
+    const name = item.name.toLowerCase();
+    if (name.includes("yamin") || name.includes("mie")) {
+      return "https://picsum.photos/seed/yamin1/400/400";
+    }
+    if (name.includes("bakso")) {
+      return "https://picsum.photos/seed/bakso1/400/400";
+    }
+    if (name.includes("nasi goreng") || name.includes("nasgor")) {
+      return "https://picsum.photos/seed/nasigoreng/400/400";
+    }
+    if (name.includes("ayam")) {
+      return "https://picsum.photos/seed/AyamBakar/400/300";
+    }
+    // Menggunakan base64 SVG data URI sebagai placeholder lokal yang aman dan andal
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3Qgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiB4PSIzIiB5PSIzIiByeD0iMiIgcnk9IjIiLz48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iMiIvPjxwYXRoIGQ9Im0yMSAxNS0zLjA4Ni0zLjA4NmEyIDIgMCAwIDAtMi44MjggMEw2IDIxIi8+PC9zdmc+";
+  }
+  if (img.startsWith('http')) return img;
+
+  // Menggunakan base URL dinamis berdasarkan asal outlet produk
+  const coworkingBaseUrl = import.meta.env.VITE_AIRGESTURE_DOMAIN || import.meta.env.VITE_COWORKING_API_URL || '';
+  const ngolabBaseUrl = import.meta.env.VITE_KASIR_DOMAIN || import.meta.env.VITE_NGOLAB_API_URL || '';
+  const baseUrl = item.outlet?.toLowerCase() === 'ngolab' ? ngolabBaseUrl : coworkingBaseUrl;
+
+  return `${baseUrl}${img}`;
+};
 
 interface CartItem extends MenuItem {
   quantity: number;
@@ -61,7 +107,33 @@ const CATEGORIES: Category[] = [
   { id: "eskrim", name: "Es Krim", icon: <IceCream className="w-5 h-5" /> },
 ];
 
-const MENU_ITEMS: MenuItem[] = [
+// Mapping nama kategori dari API → nama tampilan yang lebih bersih
+const CATEGORY_NAME_MAP: Record<string, string> = {
+  "minuman siap saji": "Minuman",
+  "minuman cepat saji": "Minuman",
+  "fast drink": "Minuman",
+  "beverages": "Minuman",
+  "beverage": "Minuman",
+  "drinks": "Minuman",
+  "drink": "Minuman",
+  "makanan utama": "Makanan",
+  "main course": "Makanan",
+  "food": "Makanan",
+  "es krim": "Es Krim",
+  "ice cream": "Es Krim",
+  "dessert": "Es Krim",
+  "snack": "Tambahan",
+  "cemilan": "Tambahan",
+  "side dish": "Tambahan",
+};
+
+// Helper: normalisasi nama kategori dari API
+const normalizeCategoryName = (raw: string): string => {
+  const lower = raw.toLowerCase().trim();
+  return CATEGORY_NAME_MAP[lower] ?? raw;
+};
+
+const MENU_ITEMS: any[] = [
   // Makanan (5 total)
   {
     id: "b1",
@@ -276,58 +348,35 @@ const MENU_ITEMS: MenuItem[] = [
   },
 ];
 
-const PROMO_IMAGES = [
-  {
-    url: "https://picsum.photos/seed/bakso-promo/1080/1920",
-    title: "Bakso Komplit Spesial",
-    subtitle: "Menu Terlaris Minggu Ini"
-  },
-  {
-    url: "https://picsum.photos/seed/yamin-promo/1080/1920",
-    title: "Mie Yamin Bakso",
-    subtitle: "Perpaduan Sempurna"
-  },
-  {
-    url: "https://picsum.photos/seed/goreng-promo/1080/1920",
-    title: "Bakso Goreng Renyah",
-    subtitle: "Camilan Favorit Keluarga"
-  }
-];
-
 const GESTURE_GUIDE = [
-  { 
-    id: 'wave',
-    name: "Lambaikan", 
-    desc: "Mulai Memesan", 
-    icon: <Hand className="w-8 h-8" />,
+  {
+    id: 'point',
+    name: "Arahkan Kursor",
+    desc: "Tunjuk Layar",
+    icon: <Pointer className="w-8 h-8" />,
     color: "bg-blue-500"
   },
-  { 
-    id: 'swipe-h',
-    name: "Geser Horisontal", 
-    desc: "Ganti Kategori", 
-    icon: <MoveHorizontal className="w-8 h-8" />,
+  {
+    id: 'fist',
+    name: "Menggenggam",
+    desc: "Memilih / Klik",
+    icon: <HandFist className="w-8 h-8" />,
     color: "bg-orange-500"
   },
-  { 
-    id: 'swipe-v',
-    name: "Geser Vertikal", 
-    desc: "Scroll Menu", 
-    icon: <MoveVertical className="w-8 h-8" />,
+  {
+    id: 'thumbsup',
+    name: "Gesture Jempol",
+    desc: "Otomatis Check Out",
+    icon: <ThumbsUp className="w-8 h-8" />,
     color: "bg-green-500"
-  },
-  { 
-    id: 'point',
-    name: "Tunjuk & Tahan", 
-    desc: "Detail Menu", 
-    icon: <Pointer className="w-8 h-8" />,
-    color: "bg-stone-900"
   }
 ];
 
 export default function App() {
   const [menuItems, setMenuItems] = useState<Product[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0].id);
+  const [dynamicCategories, setDynamicCategories] = useState<string[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string>('');
+  const [selectedOutlet, setSelectedOutlet] = useState<'all' | 'coworking' | 'ngolab'>('all');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -337,29 +386,221 @@ export default function App() {
   const [lastOrderId, setLastOrderId] = useState<string>("");
   const [isIdle, setIsIdle] = useState(false);
   const [showPromoDialog, setShowPromoDialog] = useState(false);
-  const [appliedPromo, setAppliedPromo] = useState<{type: 'voucher' | 'point', value: number, code: string} | null>(null);
+  const [appliedPromo, setAppliedPromo] = useState<{ type: 'voucher' | 'point', value: number, code: string } | null>(null);
   const [promoIndex, setPromoIndex] = useState(0);
   const [showGestureHelp, setShowGestureHelp] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showPrintNotification, setShowPrintNotification] = useState(false);
+  const [promoMedia, setPromoMedia] = useState<Promotion[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [coinPromos, setCoinPromos] = useState<CoinPromo[]>([]);
+  const [earnedPoints, setEarnedPoints] = useState(0);
+  const [showCoinPromoDialog, setShowCoinPromoDialog] = useState(false);
+  const [redeemingPromo, setRedeemingPromo] = useState(false);
+  const rfidBuffer = React.useRef("");
 
-  // Fetch menus from API
+  const [manualPromoCode, setManualPromoCode] = useState("");
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoSuccess, setPromoSuccess] = useState<string | null>(null);
+  
+  const [showCameraDialog, setShowCameraDialog] = useState(false);
+  const [showProofPreview, setShowProofPreview] = useState(false);
+  const [paymentProof, setPaymentProof] = useState<string | null>(null);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
+  // Pesanan yang berhasil dibuat per outlet (1 nota bisa jadi 2 pesanan)
+  const [createdOrders, setCreatedOrders] = useState<{ outlet: string, orderId: string, total: number }[]>([]);
+  const paymentVideoRef = useRef<HTMLVideoElement>(null);
+  const paymentCanvasRef = useRef<HTMLCanvasElement>(null);
+  const countdownTimerRef = useRef<number | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  const clearCountdown = () => {
+    if (countdownTimerRef.current !== null) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdown(null);
+  };
+
+  // Hitung mundur 5 detik lalu jepret otomatis
+  const startCountdown = () => {
+    clearCountdown();
+    let remaining = 5;
+    setCountdown(remaining);
+    countdownTimerRef.current = window.setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearCountdown();
+        handleCapture();
+      } else {
+        setCountdown(remaining);
+      }
+    }, 1000);
+  };
+
+  const startPaymentCamera = async () => {
+    setShowCameraDialog(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (paymentVideoRef.current) {
+        paymentVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Camera access error:", err);
+      alert("Gagal mengakses kamera. Pastikan izin diberikan.");
+    }
+  };
+
+  const stopPaymentCamera = () => {
+    clearCountdown();
+    if (paymentVideoRef.current && paymentVideoRef.current.srcObject) {
+      const stream = paymentVideoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setShowCameraDialog(false);
+  };
+
+  const handleCapture = () => {
+    if (paymentVideoRef.current && paymentCanvasRef.current) {
+      const context = paymentCanvasRef.current.getContext('2d');
+      if (context) {
+        paymentCanvasRef.current.width = paymentVideoRef.current.videoWidth;
+        paymentCanvasRef.current.height = paymentVideoRef.current.videoHeight;
+        context.drawImage(paymentVideoRef.current, 0, 0, paymentCanvasRef.current.width, paymentCanvasRef.current.height);
+        const dataUrl = paymentCanvasRef.current.toDataURL('image/jpeg');
+        setPaymentProof(dataUrl);
+        stopPaymentCamera();
+      }
+    }
+  };
+  const barcodeBuffer = React.useRef("");
+  const html5QrcodeRef = React.useRef<Html5Qrcode | null>(null);
+
+
+  // Fetch menus from API (ulang tiap 30s supaya status Habis ikut stok terbaru; kategori hanya di-set saat awal)
   useEffect(() => {
+    let first = true;
     const fetchMenus = async () => {
       try {
-        const data = await getMenus();
-        // Set displayed items only if you want, but user request implies all items in the array are used.
-        // Usually we filter by 'displayed: 1' if that's what the flag means.
+        const data = await getActiveMenus();
         setMenuItems(data);
+        if (first) {
+          first = false;
+          // Ekstrak kategori unik dari data API dan tambahkan "Semua" di awal
+          const cats = Array.from(new Set(data.map(m => normalizeCategoryName(m.category)).filter(Boolean)));
+          setDynamicCategories(["Semua", ...cats]);
+          setActiveCategory("Semua");
+        }
       } catch (error) {
-        console.error("Failed to fetch menus:", error);
+        console.error("[Menu] Gagal mengambil menu:", error);
       }
     };
     fetchMenus();
+    const menuTimer = setInterval(fetchMenus, 30000);
+    return () => clearInterval(menuTimer);
+  }, []);
+
+  // Fetch Digital Board active media (Promotions)
+  useEffect(() => {
+    const fetchPromoMedia = async () => {
+      try {
+        console.log("[Promo] Mengambil data promosi...");
+        const data = await getPromotions();
+        console.log("[Promo] Data diterima:", data);
+        if (data && data.length > 0) {
+          setPromoMedia(data);
+          console.log("[Promo] Berhasil memuat", data.length, "item promosi");
+        } else {
+          console.warn("[Promo] Data kosong atau tidak valid, gunakan fallback");
+        }
+      } catch (error) {
+        console.error("[Promo] Gagal memuat media promosi:", error);
+      }
+    };
+    fetchPromoMedia();
+  }, []);
+
+  // RFID Scanner Listener
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Jangan tangkap input jika sedang di dalam dialog/input lain
+      if (e.key === 'Enter') {
+        const code = rfidBuffer.current.trim();
+        rfidBuffer.current = "";
+        if (code.length > 3) {
+          try {
+            const user = await scanTag(code);
+            setCurrentUser(user);
+            const promos = await getCoinPromos();
+            const activePromos = promos.filter(p => p.is_active === 1);
+            setCoinPromos(activePromos);
+
+            // Tampilkan dialog pilihan promo koin jika ada
+            if (activePromos.length > 0) {
+              setShowCoinPromoDialog(true);
+            }
+          } catch (err) {
+            console.error("Scan RFID gagal", err);
+          }
+        }
+      } else {
+        if (e.key.length === 1 && e.key.match(/[a-zA-Z0-9-]/)) {
+          rfidBuffer.current += e.key;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Handler untuk menukar koin menjadi voucher
+  const handleRedeemPromo = async (promo: CoinPromo) => {
+    if (!currentUser) return;
+    if (currentUser.coin_balance < promo.coin_cost) {
+      alert(`Koin Anda tidak cukup. Dibutuhkan ${promo.coin_cost} koin, saldo Anda ${currentUser.coin_balance} koin.`);
+      return;
+    }
+    setRedeemingPromo(true);
+    try {
+      const result = await redeemCoinPromo(currentUser.id, promo.id);
+      // Hitung nilai diskon berdasarkan tipe
+      let discountValue = 0;
+      if (promo.discount_type === 'percentage') {
+        discountValue = Math.floor(cartTotal * (promo.discount_value / 100));
+      } else {
+        discountValue = promo.discount_value;
+      }
+      setAppliedPromo({ type: 'voucher', value: discountValue, code: result.voucher_code });
+      // Update saldo koin user secara lokal
+      setCurrentUser(prev => prev ? { ...prev, coin_balance: prev.coin_balance - promo.coin_cost } : null);
+      setShowCoinPromoDialog(false);
+    } catch (err) {
+      console.error("Gagal menukar koin:", err);
+      alert("Gagal menukar koin, silakan coba lagi.");
+    } finally {
+      setRedeemingPromo(false);
+    }
+  };
+
+  // Screen Ping Logic
+  useEffect(() => {
+    const doPing = async () => {
+      try {
+        console.log("Digital Board API: Mengirim ping status online...");
+        await pingScreen(1);
+        console.log("Digital Board API: Ping sukses.");
+      } catch (error) {
+        console.error("Digital Board API: Ping gagal:", error);
+      }
+    };
+    doPing();
+    const pingTimer = setInterval(doPing, 30000);
+    return () => clearInterval(pingTimer);
   }, []);
 
   // Hand tracking hook
-  const { videoRef, canvasRef, cursorRef, isModelLoaded } = useHandTracking();
+  const { videoRef, canvasRef, cursorRef, isModelLoaded, stopCamera, startCamera } = useHandTracking();
 
   // Clock Logic
   useEffect(() => {
@@ -374,11 +615,11 @@ export default function App() {
     const resetIdleTimer = () => {
       setIsIdle(false);
       if (idleTimer) clearTimeout(idleTimer);
-      
+
       // Don't start idle timer if checkout dialog is open (QRIS, Success, or Receipt)
       if (isCheckoutOpen) return;
 
-      idleTimer = setTimeout(() => setIsIdle(true), 15000); // 15 seconds
+      idleTimer = setTimeout(() => setIsIdle(true), 3000); // 15 seconds
     };
 
     // Events to track user activity
@@ -393,16 +634,28 @@ export default function App() {
     };
   }, [isCheckoutOpen, orderComplete]);
 
+  const promoCount = promoMedia.length;
+
+  // Reset promo index when idle state changes or list size changes
+  useEffect(() => {
+    setPromoIndex(0);
+  }, [isIdle, promoCount]);
+
   // Promo Rotation Logic
   useEffect(() => {
     let promoTimer: any;
-    if (isIdle) {
+    if (isIdle && promoCount > 0) {
+      const currentItem = promoMedia[promoIndex];
+      const duration = currentItem && currentItem.duration
+        ? currentItem.duration * 1000
+        : 5000; // default 5 seconds
+
       promoTimer = setInterval(() => {
-        setPromoIndex(prev => (prev + 1) % PROMO_IMAGES.length);
-      }, 5000); // Rotate every 5 seconds
+        setPromoIndex(prev => (prev + 1) % promoCount);
+      }, duration);
     }
     return () => clearInterval(promoTimer);
-  }, [isIdle]);
+  }, [isIdle, promoIndex, promoCount, promoMedia]);
 
   // Close checkout if cart becomes empty
   useEffect(() => {
@@ -424,16 +677,20 @@ export default function App() {
     return () => document.removeEventListener('thumbsup', handleThumbsUp);
   }, [isCheckoutOpen, cart.length]);
 
-  const filteredItems = useMemo(() => 
-    menuItems.filter(item => item.category.toLowerCase() === activeCategory.toLowerCase()),
-    [activeCategory, menuItems]
+  const filteredItems = useMemo(() =>
+    menuItems.filter(item => {
+      const matchCategory = !activeCategory || activeCategory.toLowerCase() === 'semua' || normalizeCategoryName(item.category).toLowerCase() === activeCategory.toLowerCase();
+      const matchOutlet = selectedOutlet === 'all' || !item.outlet || item.outlet.toLowerCase() === selectedOutlet.toLowerCase();
+      return matchCategory && matchOutlet;
+    }),
+    [activeCategory, selectedOutlet, menuItems]
   );
 
-  const cartTotal = useMemo(() => 
+  const cartTotal = useMemo(() =>
     cart.reduce((sum, item) => sum + parseFloat(item.price) * item.quantity, 0),
     [cart]
   );
-  
+
   const finalTotal = useMemo(() => {
     let total = cartTotal;
     if (appliedPromo) {
@@ -442,12 +699,226 @@ export default function App() {
     return total;
   }, [cartTotal, appliedPromo]);
 
-  const cartCount = useMemo(() => 
+  const cartCount = useMemo(() =>
     cart.reduce((sum, item) => sum + item.quantity, 0),
     [cart]
   );
 
+  const handleApplyBarcodeVoucher = async (codeToApply: string) => {
+    const code = codeToApply.trim();
+    if (!code) return;
+
+    setPromoLoading(true);
+    setPromoError(null);
+    setPromoSuccess(null);
+
+    try {
+      const adminPromos = await getAdminPromos();
+      // Cari promo yang cocok (case-insensitive)
+      const foundPromo = adminPromos.find(p => p.code.toUpperCase() === code.toUpperCase());
+
+      if (!foundPromo) {
+        setPromoError("Voucher tidak ditemukan");
+        setPromoLoading(false);
+        return;
+      }
+
+      // Validasi 1: Status Aktif
+      if (foundPromo.status !== 'Active') {
+        setPromoError("Voucher sedang tidak aktif");
+        setPromoLoading(false);
+        return;
+      }
+
+      // Validasi 2: Minimal Pembelian
+      if (cartTotal < foundPromo.minPurchase) {
+        setPromoError(`Minimal pembelian untuk voucher ini adalah Rp ${foundPromo.minPurchase.toLocaleString('id-ID')}`);
+        setPromoLoading(false);
+        return;
+      }
+
+      // Validasi 3: Kuota Penggunaan
+      // maxUsage null atau 0 = unlimited (tidak ada batasan)
+      const hasUsageLimit = foundPromo.maxUsage !== null && foundPromo.maxUsage > 0;
+      if (hasUsageLimit && foundPromo.usageCount >= foundPromo.maxUsage) {
+        setPromoError("Voucher telah mencapai batas kuota penggunaan");
+        setPromoLoading(false);
+        return;
+      }
+
+      // Validasi 4: Tanggal Periode
+      // Mendukung format "YYYY-MM-DD to YYYY-MM-DD" (ngolab) maupun "YYYY-MM-DD - YYYY-MM-DD"
+      if (foundPromo.period) {
+        const periodParts = foundPromo.period.split(/ to | - /i);
+        const [startDateStr, endDateStr] = periodParts;
+        const startDate = new Date(startDateStr.trim());
+        const endDate = new Date(endDateStr.trim());
+        endDate.setHours(23, 59, 59, 999);
+        const now = new Date();
+        if (now < startDate || now > endDate) {
+          setPromoError(`Voucher hanya berlaku pada periode ${foundPromo.period}`);
+          setPromoLoading(false);
+          return;
+        }
+      }
+
+      // Hitung nilai diskon
+      let discountValue = 0;
+      if (foundPromo.type === 'Percentage') {
+        discountValue = Math.floor(cartTotal * (foundPromo.discount / 100));
+      } else {
+        discountValue = foundPromo.discount;
+      }
+
+      // Terapkan promo
+      setAppliedPromo({
+        type: 'voucher',
+        value: discountValue,
+        code: foundPromo.code
+      });
+
+      setPromoSuccess(`Voucher ${foundPromo.code} berhasil dipasang! Diskon Rp ${discountValue.toLocaleString('id-ID')}`);
+
+      // Tutup dialog setelah jeda visual
+      setTimeout(() => {
+        closePromoDialogAndResumeHandTracking();
+      }, 1500);
+
+    } catch (err) {
+      console.error("Gagal memvalidasi voucher:", err);
+      setPromoError("Gagal menghubungi server untuk verifikasi voucher");
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  const closePromoDialogAndResumeHandTracking = async () => {
+    console.log("closePromoDialogAndResumeHandTracking: Memulai penutupan aman...");
+    if (html5QrcodeRef.current && html5QrcodeRef.current.isScanning) {
+      try {
+        console.log("closePromoDialogAndResumeHandTracking: Menghentikan scanner kamera...");
+        await html5QrcodeRef.current.stop();
+      } catch (e) {
+        console.error("closePromoDialogAndResumeHandTracking: Gagal stop scanner:", e);
+      } finally {
+        html5QrcodeRef.current = null;
+      }
+    }
+    setShowPromoDialog(false);
+  };
+
+
+  // Barcode Scanner Listener untuk Voucher Admin
+  useEffect(() => {
+    if (!showPromoDialog) {
+      barcodeBuffer.current = "";
+      setPromoError(null);
+      setPromoSuccess(null);
+      setManualPromoCode("");
+      return;
+    }
+
+    const handleBarcodeKeyDown = (e: KeyboardEvent) => {
+      // Jika user sedang mengetik langsung di kolom input manual, abaikan listener barcode scanner global ini
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // Barcode scanner bertindak sebagai emulasi keyboard yang cepat diakhiri Enter.
+      if (e.key === 'Enter') {
+        const code = barcodeBuffer.current.trim();
+        barcodeBuffer.current = "";
+        if (code.length > 2) {
+          handleApplyBarcodeVoucher(code);
+        }
+      } else {
+        // Abaikan tombol kontrol sistem
+        if (e.key.length === 1 && e.key.match(/[a-zA-Z0-9-]/)) {
+          barcodeBuffer.current += e.key;
+          setManualPromoCode(barcodeBuffer.current);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleBarcodeKeyDown);
+    return () => window.removeEventListener('keydown', handleBarcodeKeyDown);
+  }, [showPromoDialog, cartTotal]);
+
+  // Camera Barcode Scanner dengan html5-qrcode
+  useEffect(() => {
+    if (!showPromoDialog) return;
+
+    // 1. Hentikan kamera hand tracking sementara agar tidak konflik kamera
+    stopCamera();
+
+    let html5Qrcode: Html5Qrcode | null = null;
+    let isStopped = false;
+
+    // Tunggu sebentar agar div #reader dirender oleh React sebelum diakses
+    const startScanner = async () => {
+      try {
+        html5Qrcode = new Html5Qrcode("reader");
+        html5QrcodeRef.current = html5Qrcode;
+
+
+        const qrCodeSuccessCallback = (decodedText: string) => {
+          console.log("Barcode/QR Terdeteksi Kamera:", decodedText);
+          handleApplyBarcodeVoucher(decodedText);
+
+          if (html5Qrcode && html5Qrcode.isScanning && !isStopped) {
+            isStopped = true;
+            html5Qrcode.stop().catch(err => console.error("Gagal stop scanner setelah sukses:", err));
+          }
+        };
+
+        const config = {
+          fps: 10,
+          qrbox: (width: number, height: number) => {
+            const size = Math.min(width, height) * 0.7;
+            return { width: size, height: size };
+          },
+          aspectRatio: 1.0
+        };
+
+        await html5Qrcode.start(
+          { facingMode: "user" },
+          config,
+          qrCodeSuccessCallback,
+          () => {
+            // Abaikan error logs untuk frame yang tidak ada barcode-nya
+          }
+        );
+      } catch (err) {
+        console.error("Gagal menyalakan scanner webcam:", err);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      startScanner();
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+
+      const cleanup = async () => {
+        if (html5Qrcode && html5Qrcode.isScanning) {
+          try {
+            await html5Qrcode.stop();
+          } catch (e) {
+            console.error("Cleanup stop scanner failed:", e);
+          }
+        }
+        // 2. Hidupkan kembali kamera hand tracking setelah dialog ditutup
+        startCamera();
+      };
+      cleanup();
+    };
+  }, [showPromoDialog]);
+
+
   const addToCart = (item: MenuItem) => {
+    // Jangan masukkan menu stok habis (mis. dari dialog detail yang masih terbuka saat data berubah)
+    if (!isMenuAvailable(item)) return;
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id);
       if (existing) {
@@ -476,20 +947,87 @@ export default function App() {
     setIsCheckoutOpen(true);
   };
 
-  const confirmOrder = () => {
-    setOrderComplete(true);
-    // Generate order code: 2 random letters + 4 random digits
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const randomChars = Array.from({ length: 2 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-    const randomNums = Math.floor(1000 + Math.random() * 9000);
-    const orderId = `${randomChars}${randomNums}`;
-    
-    setLastOrderId(orderId);
-    
-    // Automatically transition to receipt view after 3 seconds
-    setTimeout(() => {
-      setShowReceipt(true);
-    }, 3000);
+  const confirmOrder = async () => {
+    // Outlet dikelompokkan per item — 1 nota bisa berisi menu ngolab + coworking,
+    // tiap grup dikirim ke server outlet masing-masing (KDS admin terpisah).
+    const grouped: Record<string, CartItem[]> = {};
+    cart.forEach(item => {
+      const outlet = outletOfItem(item);
+      (grouped[outlet] ||= []).push(item);
+    });
+    const groups = Object.entries(grouped);
+
+    setSubmittingOrder(true);
+    try {
+      const customerName = currentUser ? currentUser.nama : `Pelanggan Kiosk #${Math.floor(Math.random() * 100)}`;
+      // Satu external_id untuk seluruh nota; tiap outlet dapat suffix agar tidak bentrok
+      const notaId = `KIOSK-${Date.now()}`;
+
+      const created: { outlet: string, orderId: string, apiPrefix: string, total: number }[] = [];
+      let failed: { outlet: string, message: string } | null = null;
+
+      for (const [outlet, items] of groups) {
+        const groupTotal = items.reduce((sum, item) => sum + parseFloat(item.price as any) * item.quantity, 0);
+        const isLast = outlet === groups[groups.length - 1][0];
+        // Diskon promo dibagi proporsional; grup terakhir menyerap sisa pembulatan
+        const allocated = isLast
+          ? Math.max(0, finalTotal - created.reduce((sum, g) => sum + g.total, 0))
+          : Math.round(groupTotal * finalTotal / (cartTotal || 1));
+
+        const externalId = groups.length === 1 ? notaId : `${notaId}-${outlet === 'ngolab' ? 'NGL' : 'CWK'}`;
+        const payload = buildOrderPayload(outlet, {
+          customerName,
+          total: allocated,
+          items,
+          externalId,
+          userId: currentUser?.id as string | undefined,
+        });
+
+        try {
+          const res = await createTangolabOrder(payload, apiPrefixForOutlet(outlet));
+          // Bentuk response beda: coworking {message, order:{id}}, ngolab {message, id}
+          const orderId = res?.order?.id || res?.id || res?.invoice_number || externalId;
+          created.push({ outlet, orderId, apiPrefix: apiPrefixForOutlet(outlet), total: allocated });
+        } catch (groupError) {
+          // Jangan lanjut kirim grup lain: tampilkan persis outlet mana yang gagal
+          failed = { outlet, message: groupError instanceof Error ? groupError.message : String(groupError) };
+          break;
+        }
+      }
+
+      setCreatedOrders(created);
+      setLastOrderId(created[0]?.orderId || notaId);
+
+      // Bukti bayar dikirim ke tiap pesanan yang berhasil dibuat
+      if (paymentProof) {
+        for (const order of created) {
+          try {
+            await uploadPaymentProof(order.orderId, paymentProof, order.apiPrefix);
+          } catch (uploadError) {
+            console.error(`Gagal mengunggah bukti pembayaran (${order.outlet}):`, uploadError);
+          }
+        }
+      }
+
+      if (failed) {
+        const done = created.map(c => `${c.outlet} (${c.orderId})`).join(', ');
+        throw new Error(
+          `outlet ${failed.outlet} menolak pesanan — ${failed.message}` +
+          (done ? `. Pesanan yang sudah masuk: ${done}` : '')
+        );
+      }
+
+      // Hitung simulasi earned points, e.g. 5% of total
+      setEarnedPoints(Math.floor(finalTotal * 0.05));
+
+      setOrderComplete(true);
+      setTimeout(() => setShowReceipt(true), 3000);
+    } catch (e) {
+      console.error("Order failed", e);
+      alert(`Pesanan gagal dibuat: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSubmittingOrder(false);
+    }
   };
 
   const closeOrder = () => {
@@ -497,6 +1035,15 @@ export default function App() {
     setShowReceipt(false);
     setIsCheckoutOpen(false);
     setCart([]);
+    // Reset semua state promo & user agar transaksi berikutnya mulai bersih
+    setAppliedPromo(null);
+    setPromoError(null);
+    setPromoSuccess(null);
+    setManualPromoCode("");
+    setCurrentUser(null);
+    setPaymentProof(null);
+    setCreatedOrders([]);
+    setEarnedPoints(0);
   };
 
   const handlePrint = () => {
@@ -510,7 +1057,7 @@ export default function App() {
   return (
     <div className="h-screen bg-stone-50 font-sans text-stone-900 flex flex-col overflow-hidden relative">
       {/* Air Gesture Cursor */}
-      <div 
+      <div
         ref={cursorRef}
         className="fixed top-0 left-0 w-16 h-16 pointer-events-none z-[9999] opacity-0 transition-opacity duration-300"
         style={{ willChange: 'transform' }}
@@ -523,13 +1070,13 @@ export default function App() {
 
       {/* Hidden Hand Tracking Elements */}
       <div className="fixed opacity-0 pointer-events-none -z-50" style={{ left: '-9999px' }}>
-        <video 
-          ref={videoRef} 
-          playsInline 
-          muted 
+        <video
+          ref={videoRef}
+          playsInline
+          muted
         />
-        <canvas 
-          ref={canvasRef} 
+        <canvas
+          ref={canvasRef}
           width={640}
           height={480}
         />
@@ -539,6 +1086,7 @@ export default function App() {
       <AnimatePresence>
         {isIdle && (
           <motion.div
+            id="idle_screen_container"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -554,36 +1102,45 @@ export default function App() {
                 transition={{ duration: 1 }}
                 className="relative w-full h-full"
               >
-                <img
-                  src={PROMO_IMAGES[promoIndex].url}
-                  alt="Promotion"
-                  className="w-full h-full object-cover opacity-70"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 flex flex-col items-center justify-center text-center p-10">
-                  <motion.div
-                    initial={{ y: 50, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    className="space-y-6"
-                  >
-                    <Badge className="bg-orange-600 text-white text-2xl px-6 py-2 rounded-2xl font-black uppercase tracking-widest border-none">
-                      Best Seller
-                    </Badge>
-                    <h2 className="text-8xl font-black text-white tracking-tighter leading-none drop-shadow-2xl">
-                      {PROMO_IMAGES[promoIndex].title}
-                    </h2>
-                    <p className="text-3xl text-orange-200 font-bold tracking-wide uppercase">
-                      {PROMO_IMAGES[promoIndex].subtitle}
-                    </p>
-                  </motion.div>
-                </div>
+                {(() => {
+                  const item: Promotion | undefined = promoMedia[promoIndex];
+
+                  if (!item) return null;
+
+                  const rawUrl = item.file_url;
+                  // Jika URL relatif (upload dari admin), tambahkan base URL
+                  const url = rawUrl && !rawUrl.startsWith('http')
+                    ? `${BASE_URL}${rawUrl}`
+                    : rawUrl;
+
+                  return (
+                    <>
+                      {item.file_type === "video" ? (
+                        <video
+                          src={url}
+                          className="w-full h-full object-cover"
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                        />
+                      ) : (
+                        <img
+                          src={url}
+                          alt={item.title}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
+                    </>
+                  );
+                })()}
               </motion.div>
             </AnimatePresence>
 
             {/* Static Content while Idle */}
             <div className="absolute inset-0 flex flex-col items-center justify-end pb-20 pointer-events-none">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 1 }}
@@ -615,11 +1172,11 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
-            
+
             {/* Promo Indicators */}
             <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-3 z-[110]">
-              {PROMO_IMAGES.map((_, i) => (
-                <div 
+              {Array.from({ length: promoCount }).map((_, i) => (
+                <div
                   key={i}
                   className={cn(
                     "h-2 rounded-full transition-all duration-500",
@@ -654,69 +1211,80 @@ export default function App() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar Categories */}
-        <aside className="w-24 bg-white border-r border-stone-100 flex flex-col shrink-0 relative z-20">
-        <ScrollArea className="h-full">
-          <div className="flex flex-col py-6 gap-6">
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setActiveCategory(cat.id)}
-                className={cn(
-                  "flex flex-col items-center gap-2 py-4 transition-all relative",
-                  activeCategory === cat.id ? "text-orange-600" : "text-stone-400 hover:text-stone-600"
-                )}
-              >
-                {activeCategory === cat.id && (
-                  <motion.div 
-                    layoutId="active-cat"
-                    className="absolute left-0 w-1 h-12 bg-orange-600 rounded-r-full"
-                  />
-                )}
-                <div className={cn(
-                  "p-4 rounded-2xl transition-all",
-                  activeCategory === cat.id ? "bg-orange-50" : "bg-transparent"
-                )}>
-                  {React.cloneElement(cat.icon as React.ReactElement, { className: "w-8 h-8" })}
-                </div>
-                <span className="text-xs font-bold uppercase tracking-wider">{cat.name}</span>
-              </button>
-            ))}
-          </div>
-        </ScrollArea>
-      </aside>
+        <aside className="w-[clamp(56px,5vw,96px)] bg-white border-r border-stone-100 flex flex-col shrink-0 relative z-20">
+          <ScrollArea className="h-full">
+            <div className="flex flex-col py-6 gap-6">
+              {dynamicCategories.map((cat) => {
+                const getCategoryIcon = (categoryName: string) => {
+                  const name = categoryName.toLowerCase();
+                  if (name === 'semua') return <ShoppingBasket className="w-8 h-8" />;
+                  if (name === 'minuman') return <Coffee className="w-8 h-8" />;
+                  if (name === 'es krim' || name === 'eskrim' || name === 'dessert') return <IceCream className="w-8 h-8" />;
+                  if (name === 'tambahan' || name === 'cemilan' || name === 'snack') return <Plus className="w-8 h-8" />;
+                  return <Utensils className="w-8 h-8" />;
+                };
 
-      {/* Center Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="bg-white py-4 px-8 border-b border-stone-100 flex justify-between items-center z-10 shrink-0">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-stone-900">Bakso <span className="text-orange-600">Masyanto</span></h1>
-            <p className="text-xs text-stone-500 font-medium uppercase tracking-widest">Kiosk Pemesanan Mandiri</p>
-          </div>
-          
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-end">
-              <p className="text-xs text-stone-400 font-black uppercase tracking-[0.2em] leading-none mb-1.5">
-                {currentTime.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
-              </p>
-              <p className="text-4xl font-black text-stone-900 tracking-tighter italic leading-none">
-                {currentTime.getHours().toString().padStart(2, '0')}:{currentTime.getMinutes().toString().padStart(2, '0')}
-                <span className="text-orange-600 animate-pulse ml-1 text-base">
-                  {currentTime.getSeconds().toString().padStart(2, '0')}
-                </span>
-              </p>
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setActiveCategory(cat)}
+                    className={cn(
+                      "flex flex-col items-center gap-1 py-3 transition-all relative",
+                      activeCategory === cat ? "text-orange-600" : "text-stone-400 hover:text-stone-600"
+                    )}
+                  >
+                    {activeCategory === cat && (
+                      <motion.div
+                        layoutId="active-cat"
+                        className="absolute left-0 w-1 h-12 bg-orange-600 rounded-r-full"
+                      />
+                    )}
+                    <div className={cn(
+                      "p-2 rounded-2xl transition-all",
+                      activeCategory === cat ? "bg-orange-50" : "bg-transparent"
+                    )}>
+                      {getCategoryIcon(cat)}
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{cat}</span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        </header>
+          </ScrollArea>
+        </aside>
 
-        {/* Gesture Instruction Bar */}
-        <div className="bg-stone-900 text-white/90 overflow-hidden shrink-0 border-b border-white/10">
-          <div className="flex items-center justify-center gap-12 px-8 py-4 overflow-x-auto whitespace-nowrap scrollbar-hide">
-             <div className="flex items-center gap-3 text-xs font-black uppercase tracking-[0.2em] text-orange-500 shrink-0">
-               <ScanBarcode className="w-5 h-5 animate-pulse" />
-               Gesture Active
-             </div>
-             {GESTURE_GUIDE.map((g) => (
+        {/* Center Content */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Header */}
+          <header className="bg-white py-[clamp(8px,1.2vh,16px)] px-[clamp(12px,2vw,32px)] border-b border-stone-100 flex justify-between items-center z-10 shrink-0">
+            <div>
+              <h1 className="text-[clamp(1rem,1.8vw,1.5rem)] font-bold tracking-tight text-stone-900">Bakso <span className="text-orange-600">Masyanto</span></h1>
+              <p className="text-[clamp(8px,0.8vw,12px)] text-stone-500 font-medium uppercase tracking-widest">Kiosk Pemesanan Mandiri</p>
+            </div>
+
+            <div className="flex items-center gap-6">
+              <div className="flex flex-col items-end">
+                <p className="text-xs text-stone-400 font-black uppercase tracking-[0.2em] leading-none mb-1.5">
+                  {currentTime.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
+                </p>
+                <p className="text-[clamp(1rem,2vw,2.25rem)] font-black text-stone-900 tracking-tighter italic leading-none">
+                  {currentTime.getHours().toString().padStart(2, '0')}:{currentTime.getMinutes().toString().padStart(2, '0')}
+                  <span className="text-orange-600 animate-pulse ml-1 text-base">
+                    {currentTime.getSeconds().toString().padStart(2, '0')}
+                  </span>
+                </p>
+              </div>
+            </div>
+          </header>
+
+          {/* Gesture Instruction Bar */}
+          <div className="bg-stone-900 text-white/90 overflow-hidden shrink-0 border-b border-white/10">
+            <div className="flex items-center justify-center gap-12 px-8 py-4 overflow-x-auto whitespace-nowrap scrollbar-hide">
+              <div className="flex items-center gap-3 text-xs font-black uppercase tracking-[0.2em] text-orange-500 shrink-0">
+                <ScanBarcode className="w-5 h-5 animate-pulse" />
+                Gesture Active
+              </div>
+              {GESTURE_GUIDE.map((g) => (
                 <div key={g.id} className="flex items-center gap-4 shrink-0">
                   <div className="p-1.5 bg-white/10 rounded-lg">
                     {React.cloneElement(g.icon as React.ReactElement, { className: "w-4 h-4 text-white" })}
@@ -726,198 +1294,253 @@ export default function App() {
                     <span className="text-[10px] text-white/50 font-bold uppercase tracking-tight">{g.desc}</span>
                   </div>
                 </div>
-             ))}
+              ))}
+            </div>
           </div>
+
+          {/* Menu Items Grid */}
+          <main className="flex-1 bg-stone-50/50 overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="space-y-[clamp(16px,2vh,40px)] p-[clamp(12px,2vw,40px)] pb-[clamp(12px,2vh,40px)]">
+                <div className="flex justify-between items-center flex-wrap gap-4">
+                  <div className="flex items-baseline gap-4">
+                    <h2 className="text-[clamp(1.5rem,3vw,3rem)] font-black text-stone-800 capitalize tracking-tight">{activeCategory}</h2>
+                    <span className="text-lg text-stone-400 font-bold">{filteredItems.length} items</span>
+                  </div>
+
+                  {/* Outlet Filter Tabs */}
+                  <div className="flex gap-2 bg-stone-100 p-1.5 rounded-2xl border border-stone-200/50">
+                    {(['all', 'coworking', 'ngolab'] as const).map((outlet) => (
+                      <button
+                        key={outlet}
+                        onClick={() => setSelectedOutlet(outlet)}
+                        className={cn(
+                          "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all cursor-pointer",
+                          selectedOutlet === outlet
+                            ? "bg-white text-orange-600 shadow-sm"
+                            : "text-stone-400 hover:text-stone-600"
+                        )}
+                      >
+                        {outlet === 'all' ? 'Semua' : outlet === 'coworking' ? 'Coworking' : 'Ngolab'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-6">
+                  <AnimatePresence mode="popLayout">
+                    {filteredItems.map((item) => {
+                      const habis = !isMenuAvailable(item);
+                      return (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="h-full"
+                      >
+                        <Card
+                          className={cn(
+                            "rounded-3xl overflow-hidden border-none shadow-sm transition-shadow bg-white group h-full flex flex-col p-0",
+                            habis ? "cursor-not-allowed opacity-60" : "hover:shadow-md cursor-pointer"
+                          )}
+                          onClick={() => !habis && setSelectedItem(item)}
+                        >
+                          <CardContent className="p-0 flex flex-col h-full">
+                            <div className="aspect-[4/3] w-full overflow-hidden relative shrink-0">
+                              <img
+                                src={resolveImageUrl(item)}
+                                alt={item.name}
+                                className={cn(
+                                  "w-full h-full object-cover transition-transform duration-500",
+                                  habis ? "grayscale" : "group-hover:scale-110"
+                                )}
+                                referrerPolicy="no-referrer"
+                              />
+                              {habis && (
+                                <>
+                                  <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-[2px]" />
+                                  <span className="absolute inset-0 flex items-center justify-center text-white text-[clamp(1rem,1.6vw,1.75rem)] font-black uppercase tracking-[0.2em] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+                                    Habis
+                                  </span>
+                                </>
+                              )}
+                              {item.outlet && (
+                                <div className="absolute top-2 left-2 rounded-xl overflow-hidden shadow-md">
+                                  <Badge className={cn(
+                                    "text-[10px] px-2.5 py-1 border-none font-black uppercase tracking-wider text-white",
+                                    item.outlet.toLowerCase() === 'coworking'
+                                      ? "bg-amber-600/90 hover:bg-amber-600/90"
+                                      : "bg-purple-600/90 hover:bg-purple-600/90"
+                                  )}>
+                                    {item.outlet}
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 p-5 flex flex-col gap-4">
+                              <div className="flex items-start gap-3 flex-1">
+                                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                                  <h3 className="font-bold text-lg leading-tight text-stone-800 uppercase tracking-tight line-clamp-2">
+                                    {item.name}
+                                  </h3>
+                                  <p className="text-sm text-stone-500 line-clamp-2 leading-relaxed">
+                                    {item.description}
+                                  </p>
+                                </div>
+                                <span className="shrink-0 self-start font-black text-[clamp(20px,1.8vw,28px)] leading-none text-orange-600 tracking-tight whitespace-nowrap">
+                                  Rp {parseFloat(item.price).toLocaleString('id-ID')}
+                                </span>
+                              </div>
+                              <Button
+                                size="lg"
+                                disabled={habis}
+                                className={cn(
+                                  "rounded-2xl w-full h-[clamp(40px,5.5vh,64px)] px-6 text-[clamp(13px,1.2vw,18px)] font-black uppercase tracking-tight mt-auto shrink-0",
+                                  habis
+                                    ? "bg-stone-300 text-stone-500 shadow-none"
+                                    : "bg-orange-600 hover:bg-orange-700 text-white shadow-xl shadow-orange-100 group-hover:scale-[1.02] transition-transform"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToCart(item);
+                                }}
+                              >
+                                <ShoppingBasket className="w-6 h-6 mr-2" />
+                                {habis ? "Habis" : "Add"}
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </ScrollArea>
+          </main>
         </div>
 
-        {/* Menu Items Grid */}
-        <main className="flex-1 bg-stone-50/50 overflow-hidden">
-          <ScrollArea className="h-full p-10">
-            <div className="space-y-10 pb-10">
-              <div className="flex justify-between items-end">
-                <h2 className="text-5xl font-black text-stone-800 capitalize tracking-tight">{activeCategory}</h2>
-                <span className="text-lg text-stone-400 font-bold">{filteredItems.length} items</span>
-              </div>
-              
-              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                <AnimatePresence mode="popLayout">
-                  {filteredItems.map((item) => (
-                    <motion.div
-                      key={item.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      className="h-full"
-                    >
-                      <Card 
-                        className="rounded-3xl overflow-hidden border-none shadow-sm hover:shadow-md transition-shadow bg-white group h-full flex flex-col p-0 cursor-pointer"
-                        onClick={() => setSelectedItem(item)}
-                      >
-                        <CardContent className="p-0 flex flex-col h-full">
-                          <div className="aspect-[4/3] w-full overflow-hidden relative shrink-0">
-                            <img 
-                              src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
-                              alt={item.name} 
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                              referrerPolicy="no-referrer"
-                            />
-                            <div className="absolute top-2 right-2 border-2 border-white/20 rounded-xl overflow-hidden">
-                              <Badge className="bg-white/95 text-stone-900 backdrop-blur-md text-sm px-3 py-1.5 border-none font-black shadow-lg">
-                                Rp {parseFloat(item.price).toLocaleString('id-ID')}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div className="flex-1 p-5 flex flex-col gap-4">
-                            <div className="flex flex-col gap-1.5 flex-1">
-                              <h3 className="font-bold text-lg leading-tight text-stone-800 uppercase tracking-tight line-clamp-2">
-                                {item.name}
-                              </h3>
-                              <p className="text-sm text-stone-500 line-clamp-2 leading-relaxed">
-                                {item.description}
-                              </p>
-                            </div>
-                            <Button 
-                              size="lg" 
-                              className="bg-orange-600 hover:bg-orange-700 text-white rounded-2xl w-full h-16 px-6 shadow-xl shadow-orange-100 text-lg font-black uppercase tracking-tight group-hover:scale-[1.02] transition-transform mt-auto shrink-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                addToCart(item);
-                              }}
-                            >
-                              <ShoppingBasket className="w-6 h-6 mr-2" />
-                              Add
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-            </div>
-          </ScrollArea>
-        </main>
-      </div>
-
-      {/* Right Sidebar Checkout Button */}
-      <aside className="w-24 bg-orange-600 flex flex-col shrink-0 z-30 shadow-[-10px_0_40px_-20px_rgba(0,0,0,0.2)]">
-        <button 
-           className="h-full w-full flex flex-col items-center justify-center gap-6 text-white hover:bg-orange-700 transition-colors disabled:bg-stone-300 disabled:text-stone-500"
-           onClick={handleCheckout}
-           disabled={cart.length === 0}
-        >
-           <span className="[writing-mode:vertical-rl] text-3xl font-black uppercase tracking-[0.2em] whitespace-nowrap">
-             Selesaikan Pesanan
-           </span>
-           <ChevronRight className="w-8 h-8 stroke-[4] mt-4" />
-        </button>
-      </aside>
+        {/* Right Sidebar Checkout Button */}
+        <aside className="w-[clamp(56px,5vw,96px)] bg-orange-600 flex flex-col shrink-0 z-30 shadow-[-10px_0_40px_-20px_rgba(0,0,0,0.2)]">
+          <button
+            className="h-full w-full flex flex-col items-center justify-center gap-6 text-white hover:bg-orange-700 transition-colors disabled:bg-stone-300 disabled:text-stone-500"
+            onClick={handleCheckout}
+            disabled={cart.length === 0}
+          >
+            <span className="[writing-mode:vertical-rl] text-[clamp(13px,1.4vw,22px)] font-black uppercase tracking-[0.2em] whitespace-nowrap">
+              Selesaikan Pesanan
+            </span>
+            <ChevronRight className="w-8 h-8 stroke-[4] mt-4" />
+          </button>
+        </aside>
       </div>
 
       {/* Bottom Horizontal Cart Section */}
-      <footer className="bg-white border-t border-stone-100 p-8 flex flex-col gap-6 h-80 z-30 shadow-[0_-10px_40px_-20px_rgba(0,0,0,0.1)] relative shrink-0">
-          <div className="flex items-center justify-between border-b border-stone-100 pb-4">
-            <div className="flex items-center gap-4">
-              <h2 className="text-3xl font-black text-stone-900 tracking-tighter uppercase italic">Keranjang</h2>
-              <div className="bg-orange-600 text-white text-sm font-black h-10 w-10 flex items-center justify-center rounded-xl shadow-lg shadow-orange-200">
-                {cartCount}
-              </div>
-            </div>
-            <div className="flex flex-col items-end">
-              <span className="text-stone-400 font-bold uppercase tracking-widest text-sm">Total Pembelian</span>
-              <span className="text-5xl font-black text-stone-900 tracking-tighter italic leading-none mt-1">
-                Rp {cartTotal.toLocaleString('id-ID')}
-              </span>
+      <footer className="bg-white border-t border-stone-100 p-[clamp(12px,2vw,32px)] flex flex-col gap-[clamp(8px,1.5vh,24px)] h-[clamp(180px,22vh,320px)] z-30 shadow-[0_-10px_40px_-20px_rgba(0,0,0,0.1)] relative shrink-0">
+        <div className="flex items-center justify-between border-b border-stone-100 pb-4">
+          <div className="flex items-center gap-4">
+            <h2 className="text-[clamp(1.2rem,2.5vw,1.875rem)] font-black text-stone-900 tracking-tighter uppercase italic">Keranjang</h2>
+            <div className="bg-orange-600 text-white text-sm font-black h-10 w-10 flex items-center justify-center rounded-xl shadow-lg shadow-orange-200">
+              {cartCount}
             </div>
           </div>
+          <div className="flex flex-col items-end">
+            <span className="text-stone-400 font-bold uppercase tracking-widest text-sm">Total Pembelian</span>
+            <span className="text-[clamp(1.5rem,3.5vw,3rem)] font-black text-stone-900 tracking-tighter italic leading-none mt-1">
+              Rp {cartTotal.toLocaleString('id-ID')}
+            </span>
+          </div>
+        </div>
 
-          <div className="flex-1 min-h-0 relative">
-            <ScrollArea className="w-full h-full" orientation="horizontal">
-              <div className="flex gap-6 pb-4 px-2">
-                <AnimatePresence mode="popLayout">
-                  {cart.length > 0 ? (
-                    cart.map((item) => (
-                      <motion.div 
-                        key={item.id}
-                        initial={{ opacity: 0, scale: 0.8, x: -20 }}
-                        animate={{ opacity: 1, scale: 1, x: 0 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        className="flex items-center gap-4 bg-stone-50 p-3 pr-5 rounded-[20px] border border-stone-100 group shrink-0 relative hover:border-orange-200 transition-colors w-[360px]"
-                      >
-                        <div className="relative w-24 h-24 rounded-lg overflow-hidden shadow-sm shrink-0">
-                          <img 
-                            src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
-                            alt={item.name} 
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute top-0 right-0 bg-stone-900/80 backdrop-blur-sm text-white text-xs font-black h-6 min-w-[2rem] px-1.5 flex items-center justify-center rounded-bl-md">
-                            {item.quantity}x
-                          </div>
+        <div className="flex-1 min-h-0 relative">
+          <ScrollArea className="w-full h-full" orientation="horizontal">
+            <div className="flex gap-6 pb-4 px-2">
+              <AnimatePresence mode="popLayout">
+                {cart.length > 0 ? (
+                  cart.map((item) => (
+                    <motion.div
+                      key={item.id}
+                      initial={{ opacity: 0, scale: 0.8, x: -20 }}
+                      animate={{ opacity: 1, scale: 1, x: 0 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="flex items-center gap-3 bg-stone-50 p-2 pr-4 rounded-[20px] border border-stone-100 group shrink-0 relative hover:border-orange-200 transition-colors w-[clamp(240px,28vw,360px)]"
+                    >
+                      <div className="relative w-[clamp(56px,5.5vw,96px)] h-[clamp(56px,5.5vw,96px)] rounded-lg overflow-hidden shadow-sm shrink-0">
+                        <img
+                          src={resolveImageUrl(item)}
+                          alt={item.name}
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute top-0 right-0 bg-stone-900/80 backdrop-blur-sm text-white text-xs font-black h-6 min-w-[2rem] px-1.5 flex items-center justify-center rounded-bl-md">
+                          {item.quantity}x
                         </div>
-                        <div className="flex flex-col justify-center flex-1 min-w-0 pr-1">
-                          <p className="text-lg font-black text-stone-800 truncate uppercase tracking-tight leading-tight">{item.name}</p>
-                          <p className="text-base text-orange-600 font-bold mt-1">Rp {(parseFloat(item.price) * item.quantity).toLocaleString('id-ID')}</p>
-                          
-                          <div className="flex items-center gap-3 mt-3 bg-white rounded-xl p-1.5 border border-stone-200/50 w-max shadow-sm">
-                            <button 
-                              onClick={() => updateQuantity(item.id, -1)}
-                              className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-900 transition-colors"
-                            >
-                              <Minus className="w-4 h-4" />
-                            </button>
-                            <span className="w-6 text-center font-black text-stone-900 text-lg">{item.quantity}</span>
-                            <button 
-                              onClick={() => updateQuantity(item.id, 1)}
-                              className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-900 transition-colors"
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
-                            <div className="w-[1px] h-5 bg-stone-200 mx-1" />
-                            <button 
-                              onClick={() => removeFromCart(item.id)}
-                              className="p-1.5 hover:bg-red-50 rounded-lg text-stone-300 hover:text-red-500 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                      </div>
+                      <div className="flex flex-col justify-center flex-1 min-w-0 pr-1">
+                        <p className="text-[clamp(12px,1.2vw,18px)] font-black text-stone-800 truncate uppercase tracking-tight leading-tight">{item.name}</p>
+                        <p className="text-[clamp(11px,1vw,16px)] text-orange-600 font-bold mt-1">Rp {(parseFloat(item.price) * item.quantity).toLocaleString('id-ID')}</p>
+
+                        <div className="flex items-center gap-3 mt-3 bg-white rounded-xl p-1.5 border border-stone-200/50 w-max shadow-sm">
+                          <button
+                            onClick={() => updateQuantity(item.id, -1)}
+                            className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-900 transition-colors"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="w-6 text-center font-black text-stone-900 text-lg">{item.quantity}</span>
+                          <button
+                            onClick={() => updateQuantity(item.id, 1)}
+                            className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-900 transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                          <div className="w-[1px] h-5 bg-stone-200 mx-1" />
+                          <button
+                            onClick={() => removeFromCart(item.id)}
+                            className="p-1.5 hover:bg-red-50 rounded-lg text-stone-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
-                      </motion.div>
-                    ))
-                  ) : (
-                    <div className="flex items-center gap-6 py-10 opacity-30 px-6">
-                       <ShoppingBasket className="w-16 h-16 text-stone-400" />
-                       <p className="font-black uppercase tracking-[0.2em] text-sm italic text-stone-500">Pilih Menu untuk Memulai Pesanan</p>
-                    </div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </ScrollArea>
-          </div>
-        </footer>
+                      </div>
+                    </motion.div>
+                  ))
+                ) : (
+                  <div className="flex items-center gap-6 py-10 opacity-30 px-6">
+                    <ShoppingBasket className="w-16 h-16 text-stone-400" />
+                    <p className="font-black uppercase tracking-[0.2em] text-sm italic text-stone-500">Pilih Menu untuk Memulai Pesanan</p>
+                  </div>
+                )}
+              </AnimatePresence>
+            </div>
+          </ScrollArea>
+        </div>
+      </footer>
 
       {/* Floating Control Center (Gesture Friendly) - REMOVED for layout implementation */}
 
 
       {/* Item Detail Dialog */}
       <Dialog open={!!selectedItem} onOpenChange={(open) => !open && setSelectedItem(null)}>
-        <DialogContent className="sm:max-w-[800px] w-[90vw] rounded-[48px] border-none p-0 overflow-hidden shadow-3xl bg-white">
+        <DialogContent showCloseButton={false} className="sm:max-w-[800px] w-[90vw] rounded-[48px] border-none p-0 overflow-hidden shadow-3xl bg-white">
           {selectedItem && (
             <div className="flex flex-col md:flex-row h-full">
               <div className="w-full md:w-1/2 aspect-square md:aspect-auto overflow-hidden">
-                <img 
-                  src={selectedItem.image_url ? `http://localhost:5000${selectedItem.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} 
-                  alt={selectedItem.name} 
+                <img
+                  src={resolveImageUrl(selectedItem)}
+                  alt={selectedItem.name}
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
                 />
               </div>
               <div className="p-12 flex flex-col justify-between flex-1 relative">
-                <Button 
-                   variant="ghost" 
-                   size="icon" 
-                   className="absolute top-6 right-6 text-stone-300 hover:text-stone-900 rounded-full"
-                   onClick={() => setSelectedItem(null)}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-6 right-6 text-stone-300 hover:text-stone-900 rounded-full"
+                  onClick={() => setSelectedItem(null)}
                 >
                   <X className="w-8 h-8" />
                 </Button>
@@ -931,28 +1554,29 @@ export default function App() {
                       {selectedItem.name}
                     </h2>
                   </div>
-                  
+
                   <div className="h-0.5 w-12 bg-orange-600/20 rounded-full" />
 
                   <p className="text-stone-500 text-xl leading-relaxed font-bold">
                     {selectedItem.description}
                   </p>
-                  
+
                   <div className="text-5xl font-black text-stone-900 italic tracking-tighter">
                     Rp {parseFloat(selectedItem.price).toLocaleString('id-ID')}
                   </div>
                 </div>
-                
+
                 <div className="mt-12 pt-8 border-t border-stone-100">
-                  <Button 
-                    className="w-full h-24 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-2xl font-black uppercase tracking-tight shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-4 py-8 group"
+                  <Button
+                    disabled={!isMenuAvailable(selectedItem)}
+                    className="w-full h-24 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-2xl font-black uppercase tracking-tight shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-4 py-8 group disabled:bg-stone-300 disabled:text-stone-500 disabled:shadow-none"
                     onClick={() => {
                       addToCart(selectedItem);
                       setSelectedItem(null);
                     }}
                   >
                     <ShoppingBasket className="w-10 h-10 group-hover:scale-110 transition-transform" />
-                    Tambah ke Pesanan
+                    {isMenuAvailable(selectedItem) ? "Tambah ke Pesanan" : "Habis"}
                   </Button>
                 </div>
               </div>
@@ -964,7 +1588,7 @@ export default function App() {
       {/* Checkout Full Screen */}
       <AnimatePresence>
         {isCheckoutOpen && (
-          <motion.div 
+          <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -981,9 +1605,9 @@ export default function App() {
                     exit={{ opacity: 0, x: -20 }}
                     className="flex flex-col h-full"
                   >
-                    <div className="p-12 pb-6 text-center border-b border-stone-100 shrink-0 mt-8">
-                      <h2 className="text-6xl font-black text-stone-900 tracking-tight">Detail Pesanan</h2>
-                      <p className="text-stone-400 text-2xl font-bold mt-4">
+                    <div className="p-[clamp(16px,3vw,48px)] pb-4 text-center border-b border-stone-100 shrink-0 mt-4">
+                      <h2 className="text-[clamp(1.8rem,4vw,3.75rem)] font-black text-stone-900 tracking-tight">Detail Pesanan</h2>
+                      <p className="text-stone-400 text-[clamp(0.9rem,1.5vw,1.5rem)] font-bold mt-2">
                         Silakan tinjau kembali pesanan Anda sebelum melakukan pembayaran.
                       </p>
                     </div>
@@ -992,32 +1616,32 @@ export default function App() {
                       <ScrollArea className="h-full w-full px-12 py-8">
                         <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-10">
                           {cart.map((item) => (
-                            <div key={item.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-6 p-6 bg-stone-50 rounded-[24px] border border-stone-100">
-                              <div className="w-24 h-24 rounded-xl overflow-hidden shadow-sm shrink-0">
-                                <img src={item.image_url ? `http://localhost:5000${item.image_url}` : "https://picsum.photos/seed/placeholder/400/400"} alt={item.name} className="w-full h-full object-cover" />
+                            <div key={item.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 p-4 bg-stone-50 rounded-[24px] border border-stone-100">
+                              <div className="w-[clamp(56px,5.5vw,96px)] h-[clamp(56px,5.5vw,96px)] rounded-xl overflow-hidden shadow-sm shrink-0">
+                                <img src={resolveImageUrl(item)} alt={item.name} className="w-full h-full object-cover" />
                               </div>
                               <div className="min-w-0">
                                 <p className="text-xl font-black text-stone-800 uppercase tracking-tight leading-tight truncate">{item.name}</p>
                                 <p className="text-base text-stone-500 font-bold mt-1">Rp {parseFloat(item.price).toLocaleString('id-ID')}</p>
                               </div>
                               <div className="flex items-center gap-3 bg-white rounded-[16px] p-1.5 border-2 border-stone-200 w-max shadow-sm shrink-0 h-max">
-                                <button 
+                                <button
                                   onClick={() => updateQuantity(item.id, -1)}
-                                  className="w-12 h-12 flex items-center justify-center hover:bg-stone-100 rounded-[12px] text-stone-400 hover:text-stone-900 transition-colors"
+                                  className="w-[clamp(32px,4vw,48px)] h-[clamp(32px,4vw,48px)] flex items-center justify-center hover:bg-stone-100 rounded-[12px] text-stone-400 hover:text-stone-900 transition-colors"
                                 >
                                   <Minus className="w-6 h-6" />
                                 </button>
                                 <span className="w-12 text-center font-black text-stone-900 text-xl">{item.quantity}</span>
-                                <button 
+                                <button
                                   onClick={() => updateQuantity(item.id, 1)}
-                                  className="w-12 h-12 flex items-center justify-center hover:bg-stone-100 rounded-[12px] text-stone-400 hover:text-stone-900 transition-colors"
+                                  className="w-[clamp(32px,4vw,48px)] h-[clamp(32px,4vw,48px)] flex items-center justify-center hover:bg-stone-100 rounded-[12px] text-stone-400 hover:text-stone-900 transition-colors"
                                 >
                                   <Plus className="w-6 h-6" />
                                 </button>
                                 <div className="w-[1.5px] h-8 bg-stone-200 mx-1.5" />
-                                <button 
+                                <button
                                   onClick={() => removeFromCart(item.id)}
-                                  className="w-12 h-12 flex items-center justify-center hover:bg-red-50 rounded-[12px] text-stone-300 hover:text-red-500 transition-colors"
+                                  className="w-[clamp(32px,4vw,48px)] h-[clamp(32px,4vw,48px)] flex items-center justify-center hover:bg-red-50 rounded-[12px] text-stone-300 hover:text-red-500 transition-colors"
                                 >
                                   <Trash2 className="w-6 h-6" />
                                 </button>
@@ -1034,24 +1658,24 @@ export default function App() {
 
                     <div className="p-12 pt-8 bg-white border-t border-stone-100 shadow-[0_-20px_40px_-20px_rgba(0,0,0,0.05)] shrink-0">
                       <div className="max-w-7xl mx-auto flex flex-col gap-8">
-                        <div className="flex justify-between items-center bg-stone-50 p-10 rounded-[32px]">
-                          <span className="text-stone-400 font-black uppercase tracking-[0.2em] text-2xl">Total Pembayaran</span>
-                          <span className="text-7xl font-black text-stone-900 tracking-tighter italic">Rp {finalTotal.toLocaleString('id-ID')}</span>
+                        <div className="flex justify-between items-center bg-stone-50 p-[clamp(16px,2.5vw,40px)] rounded-[32px]">
+                          <span className="text-stone-400 font-black uppercase tracking-[0.2em] text-[clamp(1rem,1.8vw,1.5rem)]">Total Pembayaran</span>
+                          <span className="text-[clamp(1.5rem,4vw,4.5rem)] font-black text-stone-900 tracking-tighter italic">Rp {finalTotal.toLocaleString('id-ID')}</span>
                         </div>
-                        <div className="flex gap-8">
-                          <Button 
+                        <div className="flex gap-4">
+                          <Button
                             variant="outline"
-                            className="flex-1 h-32 rounded-[32px] border-4 border-stone-200 hover:bg-stone-50 text-stone-600 text-3xl font-black transition-all active:scale-95 uppercase tracking-tight"
+                            className="flex-1 h-[clamp(48px,7.5vh,96px)] rounded-[24px] border-4 border-stone-200 hover:bg-stone-50 text-stone-600 text-[clamp(1rem,2vw,1.875rem)] font-black transition-all active:scale-95 uppercase tracking-tight"
                             onClick={() => setIsCheckoutOpen(false)}
                           >
                             Kembali
                           </Button>
-                          <Button 
-                            className="flex-[2] h-32 rounded-[32px] bg-orange-600 hover:bg-orange-700 text-white text-4xl font-black shadow-2xl transition-all active:scale-95 uppercase tracking-tight"
+                          <Button
+                            className="flex-[2] h-[clamp(48px,7.5vh,96px)] rounded-[24px] bg-orange-600 hover:bg-orange-700 text-white text-[clamp(1.1rem,2.5vw,2.25rem)] font-black shadow-2xl transition-all active:scale-95 uppercase tracking-tight"
                             onClick={() => setCheckoutStep('payment')}
                           >
                             Lanjut Bayar
-                            <ChevronRight className="w-10 h-10 ml-4 stroke-[4]" />
+                            <ChevronRight className="w-8 h-8 ml-3 stroke-[4]" />
                           </Button>
                         </div>
                       </div>
@@ -1078,7 +1702,7 @@ export default function App() {
                         <div className="flex flex-col items-center gap-6">
                           <p className="text-xl font-black text-orange-600 uppercase tracking-[0.3em]">QRIS Standar</p>
                           <div className="bg-white rounded-3xl border-4 border-stone-100 shadow-2xl group overflow-hidden inline-flex">
-                            <img 
+                            <img
                               src={qrisBarcode}
                               alt="QRIS Code"
                               className="w-[720px] h-auto object-contain"
@@ -1088,34 +1712,13 @@ export default function App() {
 
                         <div className="flex flex-col items-center gap-6 w-full max-w-lg">
                           <div className="flex justify-between items-center w-full px-8 py-6 bg-stone-50 rounded-3xl border-2 border-stone-100">
-                             <span className="text-xl font-bold text-stone-500 uppercase tracking-widest">Total Tagihan</span>
-                             <span className="text-4xl font-black text-stone-900 tracking-tighter italic">Rp {finalTotal.toLocaleString('id-ID')}</span>
+                            <span className="text-xl font-bold text-stone-500 uppercase tracking-widest">Total Tagihan</span>
+                            <span className="text-4xl font-black text-stone-900 tracking-tighter italic">Rp {finalTotal.toLocaleString('id-ID')}</span>
                           </div>
-                          
-                          {appliedPromo ? (
-                            <div className="flex justify-between items-center bg-green-50 px-8 py-6 rounded-3xl border-2 border-green-200 w-full">
-                                <div className="flex items-center gap-3 text-green-700">
-                                  <CheckCircle2 className="w-8 h-8" />
-                                  <span className="font-bold text-2xl">Promo: {appliedPromo.code}</span>
-                                </div>
-                                <span className="text-3xl font-black text-green-700">- Rp {appliedPromo.value.toLocaleString('id-ID')}</span>
-                            </div>
-                          ) : (
-                            <button 
-                              onClick={() => setShowPromoDialog(true)}
-                              className="w-full flex items-center justify-between px-8 py-6 rounded-3xl border-4 border-dashed border-orange-200 bg-orange-50/50 hover:bg-orange-50 hover:border-orange-300 transition-colors shadow-sm group"
-                            >
-                               <div className="flex items-center gap-6">
-                                 <div className="w-16 h-16 bg-white rounded-[24px] flex items-center justify-center text-orange-600 shadow-sm group-hover:scale-110 transition-transform">
-                                   <Ticket className="w-8 h-8" />
-                                 </div>
-                                 <span className="text-2xl font-bold text-orange-700">Gunakan Voucher / Poin</span>
-                               </div>
-                               <ChevronRight className="w-8 h-8 text-orange-400 group-hover:translate-x-2 transition-transform" />
-                            </button>
-                          )}
+
+
                         </div>
-                        
+
                         <div className="flex items-center gap-6 bg-orange-50 px-10 py-6 rounded-full border border-orange-100 shadow-sm mt-4">
                           <div className="w-6 h-6 bg-orange-500 rounded-full animate-ping" />
                           <p className="text-orange-700 font-black text-xl uppercase tracking-widest">Menunggu Pembayaran...</p>
@@ -1124,19 +1727,37 @@ export default function App() {
                     </div>
 
                     <div className="p-12 pt-8 bg-stone-50/80 backdrop-blur-md border-t border-stone-100 shrink-0">
+                      {paymentProof && (
+                        <div className="max-w-7xl mx-auto mb-6 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => setShowProofPreview(true)}
+                            className="relative w-48 h-48 rounded-3xl overflow-hidden border-4 border-green-500 shadow-xl transition-all active:scale-95 hover:scale-105"
+                          >
+                            <img src={paymentProof} alt="Bukti Bayar" className="w-full h-full object-cover" />
+                            <div className="absolute top-2 right-2 bg-green-500 text-white p-1 rounded-full">
+                              <CheckCircle2 className="w-6 h-6" />
+                            </div>
+                            <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-xs font-black uppercase tracking-widest py-1">
+                              Lihat / Ulangi
+                            </span>
+                          </button>
+                        </div>
+                      )}
                       <div className="max-w-7xl mx-auto flex gap-8">
-                        <Button 
+                        <Button
                           variant="outline"
                           className="h-32 px-16 rounded-[32px] border-4 border-stone-200 hover:bg-stone-50 text-stone-600 text-2xl font-black transition-all active:scale-95 uppercase tracking-tight"
                           onClick={() => setCheckoutStep('details')}
                         >
                           Kembali
                         </Button>
-                        <Button 
-                          className="flex-1 h-32 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-4xl font-black shadow-2xl transition-all active:scale-95 uppercase tracking-tight"
-                          onClick={confirmOrder}
+                        <Button
+                          className="flex-1 h-32 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-4xl font-black shadow-2xl transition-all active:scale-95 uppercase tracking-tight disabled:opacity-50"
+                          onClick={paymentProof ? confirmOrder : startPaymentCamera}
+                          disabled={paymentProof ? submittingOrder : false}
                         >
-                          Sudah Bayar
+                          {paymentProof ? (submittingOrder ? "Mengirim..." : "Sudah Bayar") : "Unggah Bukti Bayar"}
                         </Button>
                       </div>
                     </div>
@@ -1168,7 +1789,7 @@ export default function App() {
                         <p className="text-stone-500 text-3xl font-bold uppercase tracking-widest">Nomor Antrean</p>
                         <p className="text-9xl font-black text-orange-600 tracking-tighter">#420</p>
                       </div>
-                      
+
                       <AnimatePresence mode="wait">
                         {!showReceipt ? (
                           <motion.div
@@ -1194,6 +1815,16 @@ export default function App() {
                                 <h3 className="text-3xl font-black text-stone-900 uppercase">Struk Pembayaran</h3>
                                 <p className="text-stone-500 font-bold mt-1 text-base tracking-[0.3em] uppercase">{lastOrderId}</p>
                                 <p className="text-stone-400 font-bold mt-1 text-lg">Bakso Masyanto - Kiosk #1</p>
+                                {createdOrders.length > 1 && (
+                                  <div className="mt-3 space-y-1">
+                                    <p className="text-stone-400 font-bold text-sm uppercase tracking-widest">Pesanan diteruskan ke dapur:</p>
+                                    {createdOrders.map(o => (
+                                      <p key={o.outlet} className="text-stone-500 font-bold text-sm uppercase">
+                                        - {o.outlet === 'ngolab' ? 'Ngolab (Kasir)' : 'Coworking'} · {o.orderId} · Rp {o.total.toLocaleString('id-ID')}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                               <div className="text-right">
                                 <p className="text-stone-400 font-bold text-lg">{currentTime.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
@@ -1220,35 +1851,41 @@ export default function App() {
                               </div>
                             </div>
 
+                            {/* Barcode klaim poin disembunyikan sementara */}
+                            {false && (
                             <div className="pt-8 mt-8 border-t-2 border-dashed border-stone-200 flex flex-col items-center">
                               <p className="text-stone-400 text-sm font-black uppercase tracking-widest mb-4">Scan untuk Klaim Poin</p>
                               <div className="p-6 bg-white rounded-2xl border-2 border-stone-100 shadow-sm">
-                                <img 
-                                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BAKSO_POINTS_${lastOrderId}_VAL_${(cartTotal/1000).toFixed(0)}`}
+                                <img
+                                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BAKSO_POINTS_${lastOrderId}_VAL_${(cartTotal / 1000).toFixed(0)}`}
                                   alt="Loyalty QR"
                                   className="w-48 h-48 mix-blend-multiply"
                                 />
                               </div>
-                              <p className="text-orange-600 font-black text-2xl mt-6">+{(cartTotal/1000).toFixed(0)} Poin Masyanto</p>
+                              <p className="text-orange-600 font-black text-2xl mt-6">+{(cartTotal / 1000).toFixed(0)} Poin Masyanto</p>
                               <p className="text-xs font-mono text-stone-300 font-bold tracking-widest uppercase mt-2">ID: TRX-{lastOrderId}</p>
                             </div>
+                            )}
                           </motion.div>
                         )}
                       </AnimatePresence>
                     </div>
                   </ScrollArea>
-                  
+
                   {showReceipt && (
                     <div className="p-12 pt-8 bg-white border-t border-stone-100 shrink-0 w-full max-w-4xl mx-auto shadow-[0_-20px_40px_-20px_rgba(0,0,0,0.05)] flex flex-col gap-4">
-                      <Button 
+                      {/* Tombol Cetak Struk dinonaktifkan sementara */}
+                      {false && (
+                      <Button
                         className="w-full h-24 rounded-[32px] bg-orange-600 hover:bg-orange-700 text-white text-3xl font-black tracking-tight shadow-xl transition-all active:scale-95 flex items-center justify-center gap-4"
                         onClick={handlePrint}
                       >
                         <Printer className="w-8 h-8" />
                         Cetak Struk
                       </Button>
-                      <Button 
-                        className="w-full h-24 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-3xl font-black tracking-tight shadow-xl transition-all active:scale-95"
+                      )}
+                      <Button
+                        className="w-full h-32 rounded-[32px] bg-stone-900 hover:bg-stone-800 text-white text-4xl font-black tracking-tight border-4 border-stone-700 shadow-2xl transition-all active:scale-95"
                         onClick={closeOrder}
                       >
                         Selesai & Kembali
@@ -1261,49 +1898,123 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-      
-      {/* Promo Dialog (Scanner Mockup) */}
-      <Dialog open={showPromoDialog} onOpenChange={setShowPromoDialog}>
+
+      {/* Promo Dialog (Scanner Barcode & Input Manual) */}
+      <Dialog open={showPromoDialog} onOpenChange={(open) => {
+        if (!open) {
+          closePromoDialogAndResumeHandTracking();
+        }
+      }}>
+
         <DialogContent className="sm:max-w-[700px] rounded-[48px] border-none p-12 overflow-hidden shadow-3xl bg-stone-900 text-white">
           <div className="flex flex-col items-center">
-             <div className="flex justify-between items-center w-full mb-8">
-               <div>
-                  <h3 className="text-4xl font-black tracking-tight">Scan Voucher / Poin</h3>
-                  <p className="text-stone-400 text-xl font-bold mt-2">Arahkan barcode ke pemindai</p>
-               </div>
-               <div className="w-16 h-16 bg-stone-800 rounded-full flex items-center justify-center animate-pulse">
-                  <ScanBarcode className="w-8 h-8 text-orange-500" />
-               </div>
-             </div>
-             
-             {/* Scanner Box Mockup */}
-             <div className="relative w-full aspect-square max-w-[400px] border-4 border-stone-800 rounded-[48px] overflow-hidden mb-10 flex items-center justify-center bg-stone-950">
-               <div className="absolute inset-x-0 top-1/2 h-1 bg-orange-500 shadow-[0_0_20px_5px_rgba(249,115,22,0.5)] animate-[scan_2s_ease-in-out_infinite]" />
-               <div className="p-12 text-center opacity-50 flex flex-col items-center justify-center">
-                 <Barcode className="w-32 h-32 mb-4 text-stone-700" />
-                 <p className="font-bold text-stone-600 text-xl uppercase tracking-widest">Scanner Area</p>
-               </div>
-               
-               {/* Decorative corners */}
-               <div className="absolute top-8 left-8 w-16 h-16 border-t-8 border-l-8 border-orange-500 rounded-tl-3xl"></div>
-               <div className="absolute top-8 right-8 w-16 h-16 border-t-8 border-r-8 border-orange-500 rounded-tr-3xl"></div>
-               <div className="absolute bottom-8 left-8 w-16 h-16 border-b-8 border-l-8 border-orange-500 rounded-bl-3xl"></div>
-               <div className="absolute bottom-8 right-8 w-16 h-16 border-b-8 border-r-8 border-orange-500 rounded-br-3xl"></div>
-             </div>
+            <div className="flex justify-between items-center w-full mb-8">
+              <div>
+                <h3 className="text-4xl font-black tracking-tight">Scan Barcode Voucher</h3>
+                <p className="text-stone-400 text-xl font-bold mt-2">Arahkan barcode voucher fisik Anda ke pemindai</p>
+              </div>
+              <div className="w-16 h-16 bg-stone-800 rounded-full flex items-center justify-center">
+                <ScanBarcode className="w-8 h-8 text-orange-500 animate-pulse" />
+              </div>
+            </div>
+            {/* Scanner Box Camera */}
+            <div className="relative w-full aspect-square max-w-[400px] border-4 border-stone-800 rounded-[48px] overflow-hidden mb-8 bg-stone-950 shadow-inner flex items-center justify-center">
+              {/* Container video webcam */}
+              <div id="reader" className="w-full h-full absolute inset-0 [&_video]:object-cover [&_video]:w-full [&_video]:h-full [&_a]:hidden" />
 
-             <Button 
-               className="h-24 w-full bg-orange-600 hover:bg-orange-700 text-white text-3xl font-black rounded-[24px] uppercase tracking-tight shadow-2xl"
-               onClick={() => {
-                 setAppliedPromo({ type: 'voucher', value: 10000, code: 'HEMAT10K' });
-                 setShowPromoDialog(false);
-               }}
-             >
-                Simulasikan Berhasil
-             </Button>
+              {/* Garis Laser Animasi */}
+              <div className="absolute inset-x-0 top-1/2 h-1 bg-orange-500 shadow-[0_0_20px_5px_rgba(249,115,22,0.6)] animate-[scan_2s_ease-in-out_infinite] pointer-events-none z-10" />
+
+              {/* Decorative corners */}
+              <div className="absolute top-8 left-8 w-16 h-16 border-t-8 border-l-8 border-orange-500 rounded-tl-3xl pointer-events-none z-10"></div>
+              <div className="absolute top-8 right-8 w-16 h-16 border-t-8 border-r-8 border-orange-500 rounded-tr-3xl pointer-events-none z-10"></div>
+              <div className="absolute bottom-8 left-8 w-16 h-16 border-b-8 border-l-8 border-orange-500 rounded-bl-3xl pointer-events-none z-10"></div>
+              <div className="absolute bottom-8 right-8 w-16 h-16 border-b-8 border-r-8 border-orange-500 rounded-br-3xl pointer-events-none z-10"></div>
+            </div>
+
+            {/* Feedback & Input Manual Area */}
+            <div className="w-full space-y-6">
+              {promoLoading && (
+                <div className="flex items-center justify-center gap-4 bg-stone-800/80 p-6 rounded-3xl border border-stone-700 text-orange-400 animate-[pulse_1.5s_infinite]">
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                  <span className="font-black text-xl uppercase tracking-wider">Memverifikasi Voucher...</span>
+                </div>
+              )}
+
+              {promoError && (
+                <div className="flex items-center gap-4 bg-red-950/80 p-6 rounded-3xl border border-red-900 text-red-400">
+                  <AlertCircle className="w-8 h-8 shrink-0" />
+                  <span className="font-bold text-lg leading-relaxed">{promoError}</span>
+                </div>
+              )}
+
+              {promoSuccess && (
+                <div className="flex items-center gap-4 bg-green-950/80 p-6 rounded-3xl border border-green-900 text-green-400">
+                  <CheckCircle2 className="w-8 h-8 shrink-0 animate-[bounce_0.6s_infinite]" />
+                  <span className="font-black text-lg">{promoSuccess}</span>
+                </div>
+              )}
+
+              {/* Manual Input Fallback */}
+              <div className="flex gap-4">
+                <input
+                  type="text"
+                  value={manualPromoCode}
+                  onChange={(e) => setManualPromoCode(e.target.value)}
+                  placeholder="Atau masukkan kode voucher disini..."
+                  className="flex-1 bg-stone-950 border-2 border-stone-800 rounded-3xl px-6 py-5 text-2xl font-bold tracking-widest text-white placeholder-stone-600 focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
+                  disabled={promoLoading}
+                />
+                <Button
+                  className="bg-orange-600 hover:bg-orange-700 disabled:bg-stone-800 text-white font-black text-xl px-10 py-5 h-auto rounded-3xl uppercase tracking-tight shadow-lg hover:scale-[1.02] active:scale-95 transition-all"
+                  onClick={() => handleApplyBarcodeVoucher(manualPromoCode)}
+                  disabled={promoLoading || !manualPromoCode.trim()}
+                >
+                  Terapkan
+                </Button>
+              </div>
+
+              {/* Simulation Triggers for Demo */}
+              <div className="flex flex-col items-center gap-2 pt-2 border-t border-stone-800">
+                <span className="text-stone-500 font-bold text-xs uppercase tracking-widest">Simulasikan Pemindaian Barcode Admin</span>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      setManualPromoCode("KEMERDEKAAN");
+                      handleApplyBarcodeVoucher("KEMERDEKAAN");
+                    }}
+                    className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-orange-400 font-bold rounded-xl text-xs uppercase transition-colors"
+                    disabled={promoLoading}
+                  >
+                    Voucher [KEMERDEKAAN] (Rp 2.000)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setManualPromoCode("BERKAH");
+                      handleApplyBarcodeVoucher("BERKAH");
+                    }}
+                    className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-orange-400 font-bold rounded-xl text-xs uppercase transition-colors"
+                    disabled={promoLoading}
+                  >
+                    Voucher [BERKAH] (Rp 3.000)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setManualPromoCode("JUNIJULE");
+                      handleApplyBarcodeVoucher("JUNIJULE");
+                    }}
+                    className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-orange-400 font-bold rounded-xl text-xs uppercase transition-colors"
+                    disabled={promoLoading}
+                  >
+                    Voucher [JUNIJULE] (Rp 3.000)
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
-      
+
       {/* Gesture Help Dialog */}
       <Dialog open={showGestureHelp} onOpenChange={setShowGestureHelp}>
         <DialogContent className="sm:max-w-[600px] rounded-[48px] border-none p-12 overflow-hidden shadow-3xl bg-white">
@@ -1332,7 +2043,7 @@ export default function App() {
             "Gerakkan tangan Anda di depan layar dengan jarak sekitar 30-50cm untuk hasil terbaik."
           </div>
 
-          <Button 
+          <Button
             className="w-full h-20 rounded-[24px] bg-stone-900 hover:bg-stone-800 text-white text-xl font-black uppercase tracking-tight shadow-xl mt-8"
             onClick={() => setShowGestureHelp(false)}
           >
@@ -1340,6 +2051,157 @@ export default function App() {
           </Button>
         </DialogContent>
       </Dialog>
-        </div>
+
+      {/* Coin Promo Dialog - Muncul setelah RFID scan */}
+      <Dialog open={showCoinPromoDialog} onOpenChange={setShowCoinPromoDialog}>
+        <DialogContent className="sm:max-w-[600px] rounded-[48px] border-none p-12 overflow-hidden shadow-3xl bg-white">
+          <DialogHeader className="text-center mb-6">
+            <DialogTitle className="text-3xl font-black text-stone-900 tracking-tight">
+              🪙 Tukar Koin
+            </DialogTitle>
+            <DialogDescription className="text-stone-400 text-lg font-bold mt-2">
+              Pilih promo untuk ditukar dengan koin Anda
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* User Info */}
+          {currentUser && (
+            <div className="flex items-center gap-5 p-5 bg-stone-50 rounded-3xl border border-stone-100 mb-6">
+              <img
+                src={currentUser.avatar_url}
+                alt={currentUser.nama}
+                className="w-16 h-16 rounded-full object-cover border-2 border-orange-500"
+              />
+              <div className="flex-1">
+                <p className="text-xl font-black text-stone-800 tracking-tight">{currentUser.nama}</p>
+                <p className="text-sm text-stone-500 font-bold">NIM: {currentUser.nim}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-3xl font-black text-orange-600">{currentUser.coin_balance}</p>
+                <p className="text-xs text-stone-400 font-black uppercase tracking-widest">Koin</p>
+              </div>
+            </div>
+          )}
+
+          {/* Promo List */}
+          <ScrollArea className="max-h-[400px]">
+            <div className="space-y-4">
+              {coinPromos.map((promo) => (
+                <div key={promo.id} className="flex items-center gap-4 p-5 rounded-3xl bg-stone-50 border border-stone-100 hover:border-orange-200 transition-colors group">
+                  {promo.image_url && (
+                    <div className="w-20 h-20 rounded-2xl overflow-hidden shrink-0">
+                      <img
+                        src={promo.image_url.startsWith('http') ? promo.image_url : `${import.meta.env.VITE_TANGOLAB_API_URL?.split('/api')[0] || 'http://192.168.1.10:3000'}${promo.image_url}`}
+                        alt={promo.title}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-lg font-black text-stone-800 tracking-tight truncate">{promo.title}</p>
+                    <p className="text-sm text-stone-500 truncate">{promo.description}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 font-black text-xs">
+                        {promo.discount_type === 'percentage' ? `${promo.discount_value}%` : `Rp ${promo.discount_value.toLocaleString('id-ID')}`}
+                      </Badge>
+                      <span className="text-xs text-stone-400 font-bold">🪙 {promo.coin_cost} Koin</span>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => handleRedeemPromo(promo)}
+                    disabled={redeemingPromo || !currentUser || currentUser.coin_balance < promo.coin_cost}
+                    className="shrink-0 h-14 px-6 rounded-2xl bg-orange-600 hover:bg-orange-500 text-white font-black uppercase tracking-tight shadow-lg disabled:opacity-40"
+                  >
+                    {redeemingPromo ? "..." : "Tukar"}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+
+          <Button
+            className="w-full h-16 rounded-[24px] bg-stone-200 hover:bg-stone-300 text-stone-700 text-lg font-black uppercase tracking-tight mt-6"
+            onClick={() => setShowCoinPromoDialog(false)}
+          >
+            Lewati
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Camera Dialog for Payment Proof */}
+      <Dialog open={showCameraDialog} onOpenChange={(open) => {
+        if (!open) stopPaymentCamera();
+      }}>
+        <DialogContent className="sm:max-w-[600px] rounded-[48px] border-none p-12 overflow-hidden shadow-3xl bg-stone-900 text-white">
+          <DialogHeader className="text-center mb-6">
+            <DialogTitle className="text-3xl font-black tracking-tight text-white">Ambil Foto Bukti Bayar</DialogTitle>
+            <DialogDescription className="text-stone-400 text-lg mt-2">
+              Arahkan bukti bayar Anda ke kamera, lalu tekan Mulai Hitungan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-6">
+            <div className="relative w-full aspect-square max-w-[400px] bg-stone-950 rounded-3xl overflow-hidden border-4 border-stone-800 flex items-center justify-center shadow-inner">
+              <video ref={paymentVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+              <canvas ref={paymentCanvasRef} className="hidden" />
+              {countdown !== null && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40">
+                  <span className="text-white font-black text-[160px] leading-none drop-shadow-2xl tabular-nums">{countdown}</span>
+                  <span className="text-white/90 font-black text-2xl uppercase tracking-[0.3em] mt-4">Bersiap...</span>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-6 w-full max-w-[400px]">
+            {countdown === null && (
+              <Button
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white text-2xl font-black py-8 rounded-3xl uppercase tracking-tight"
+                onClick={startCountdown}
+              >
+                <Camera className="w-8 h-8 mr-3" />
+                Mulai Hitungan
+              </Button>
+            )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview & Ulangi Bukti Bayar */}
+      <Dialog open={showProofPreview} onOpenChange={setShowProofPreview}>
+        <DialogContent className="sm:max-w-[720px] rounded-[48px] border-none p-12 overflow-hidden shadow-3xl bg-stone-900 text-white">
+          <DialogHeader className="text-center mb-6">
+            <DialogTitle className="text-3xl font-black tracking-tight text-white">Preview Bukti Bayar</DialogTitle>
+            <DialogDescription className="text-stone-400 text-lg mt-2">
+              Pastikan bukti bayar terbaca jelas. Kalau kurang jelas, ulangi foto.
+            </DialogDescription>
+          </DialogHeader>
+          {paymentProof && (
+            <img
+              src={paymentProof}
+              alt="Preview Bukti Bayar"
+              className="w-full max-h-[55vh] object-contain rounded-3xl border-4 border-stone-800 bg-stone-950"
+            />
+          )}
+          <div className="flex gap-6 mt-6">
+            <Button
+              variant="outline"
+              className="flex-1 bg-transparent border-4 border-stone-700 hover:bg-stone-800 text-white text-2xl font-black h-24 rounded-3xl uppercase tracking-tight"
+              onClick={() => setShowProofPreview(false)}
+            >
+              Tutup
+            </Button>
+            <Button
+              className="flex-1 bg-orange-600 hover:bg-orange-700 text-white text-2xl font-black h-24 rounded-3xl uppercase tracking-tight"
+              onClick={() => {
+                setShowProofPreview(false);
+                startPaymentCamera();
+              }}
+            >
+              <Camera className="w-8 h-8 mr-3" />
+              Ulangi Foto
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

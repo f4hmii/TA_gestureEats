@@ -1,6 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import AdminMenu from './AdminMenu.tsx';
 import './index.css';
 
 interface Props {
@@ -43,7 +44,7 @@ class ErrorBoundary extends React.Component<Props, State> {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      {window.location.pathname.replace(/\/+$/, '') === '/ngolabadm' ? <AdminMenu /> : <App />}
     </ErrorBoundary>
   </StrictMode>,
 );

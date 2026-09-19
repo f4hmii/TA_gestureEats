@@ -1,5 +1,6 @@
-// Konfigurasi dasar API
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+// Konfigurasi dasar API — kosong agar melalui Vite proxy
+const BASE_URL = '';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 /**
  * Wrapper standar untuk memanggil API
@@ -9,10 +10,10 @@ export async function apiClient<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${BASE_URL}${endpoint}`;
-  
+
   const defaultHeaders: HeadersInit = {
     'Content-Type': 'application/json',
-    // 'Authorization': `Bearer ${token}` // Jika Anda nanti menggunakan otentikasi
+    'x-api-key': API_KEY,
   };
 
   try {

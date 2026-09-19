@@ -11,6 +11,8 @@ export const useHandTracking = () => {
   const isPinchedRef = useRef(false);
   const isThumbsUpRef = useRef(false);
   const lastActivityTimeRef = useRef(0);
+  const activeStreamRef = useRef<MediaStream | null>(null);
+
 
   const initHandTracking = useCallback(async () => {
     try {
@@ -37,6 +39,7 @@ export const useHandTracking = () => {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, facingMode: "user" }
         });
+        activeStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.addEventListener('loadeddata', () => {
@@ -52,15 +55,30 @@ export const useHandTracking = () => {
     }
   }, []);
 
+
   let lastVideoTime = -1;
   const predictWebcam = () => {
-    if (!videoRef.current || !handLandmarkerRef.current || !canvasRef.current) return;
-    
+    if (!videoRef.current || !videoRef.current.srcObject || !handLandmarkerRef.current || !canvasRef.current) {
+      requestAnimationFrame(predictWebcam);
+      return;
+    }
+
     const video = videoRef.current;
+
+    // Pastikan video siap dimainkan, memiliki data frame yang valid, dan dimensinya sudah termuat
+    // untuk mencegah crash MediaPipe HandLandmarker saat stream kamera baru di-mounting
+    if (video.paused || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      requestAnimationFrame(predictWebcam);
+      return;
+    }
+
     const canvas = canvasRef.current;
     const canvasCtx = canvas.getContext("2d");
     
-    if (!canvasCtx) return;
+    if (!canvasCtx) {
+      requestAnimationFrame(predictWebcam);
+      return;
+    }
 
     if (video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
@@ -201,14 +219,47 @@ export const useHandTracking = () => {
     }
   };
 
+  const stopCamera = useCallback(() => {
+    console.log("useHandTracking: Menghentikan kamera untuk barcode scan...");
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach(track => track.stop());
+      activeStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    console.log("useHandTracking: Memulai kamera kembali...");
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" }
+        });
+        activeStreamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      }
+    } catch (err) {
+      console.error("Gagal memulai kamera hand tracking:", err);
+    }
+  }, []);
+
   useEffect(() => {
     initHandTracking();
     return () => {
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+      }
       if (handLandmarkerRef.current) {
         handLandmarkerRef.current.close();
       }
     };
   }, [initHandTracking]);
 
-  return { videoRef, canvasRef, cursorRef, isModelLoaded };
+  return { videoRef, canvasRef, cursorRef, isModelLoaded, stopCamera, startCamera };
 };
+
