@@ -45,6 +45,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getActiveMenus, isMenuAvailable } from "./api/menu";
 import { Product, User, Promotion, CoinPromo, AdminPromo } from "./types/api";
+import AdminMenu from "./AdminMenu";
 import { getPromotions, scanTag, getCoinPromos, createTangolabOrder, redeemCoinPromo, getAdminPromos, uploadPaymentProof, outletOfItem, apiPrefixForOutlet, buildOrderPayload } from "./api/tangolab";
 import {
   getActiveMedia,
@@ -390,6 +391,7 @@ export default function App() {
   const [promoIndex, setPromoIndex] = useState(0);
   const [showGestureHelp, setShowGestureHelp] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showPrintNotification, setShowPrintNotification] = useState(false);
   const [promoMedia, setPromoMedia] = useState<Promotion[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1082,6 +1084,20 @@ export default function App() {
         />
       </div>
 
+      {/* Halaman Admin (dibuka lewat klik jam di header) */}
+      <AnimatePresence>
+        {showAdmin && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-stone-100 overflow-y-auto"
+          >
+            <AdminMenu forceLogin onClose={() => setShowAdmin(false)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Idle Promotion Overlay */}
       <AnimatePresence>
         {isIdle && (
@@ -1263,7 +1279,12 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-6">
-              <div className="flex flex-col items-end">
+              <button
+                type="button"
+                onClick={() => setShowAdmin(true)}
+                title="Admin"
+                className="flex flex-col items-end rounded-2xl px-4 py-2 transition-all active:scale-95 hover:bg-stone-50"
+              >
                 <p className="text-xs text-stone-400 font-black uppercase tracking-[0.2em] leading-none mb-1.5">
                   {currentTime.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
                 </p>
@@ -1273,7 +1294,7 @@ export default function App() {
                     {currentTime.getSeconds().toString().padStart(2, '0')}
                   </span>
                 </p>
-              </div>
+              </button>
             </div>
           </header>
 

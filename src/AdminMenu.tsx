@@ -15,11 +15,12 @@ const AUTH_KEY = "gestureta:admin-auth";
  * ponytail: sandi dicek di sisi klien (VITE_ADMIN_PASSWORD) — cukup untuk mencegah
  * kiosk ditinggal dalam mode admin. Pindah ke sesi login server kalau perlu keamanan nyata.
  */
-export default function AdminMenu() {
+export default function AdminMenu({ onClose, forceLogin }: { onClose?: () => void; forceLogin?: boolean }) {
   const [authed, setAuthed] = useState(
-    () => sessionStorage.getItem(AUTH_KEY) === "1"
+    () => !forceLogin && sessionStorage.getItem(AUTH_KEY) === "1"
   );
   const [pass, setPass] = useState("");
+  const [shownPass, setShownPass] = useState(false);
   const [passError, setPassError] = useState(false);
   const [items, setItems] = useState<Product[]>([]);
   const [disabled, setDisabled] = useState<string[]>(() => getDisabledMenuIds());
@@ -47,6 +48,14 @@ export default function AdminMenu() {
     }
     sessionStorage.setItem(AUTH_KEY, "1");
     setAuthed(true);
+  };
+
+  const closeToKiosk = () => {
+    // Kiosk ditinggal → sesi admin dikunci lagi, sandi diminta ulang saat jam diklik
+    sessionStorage.removeItem(AUTH_KEY);
+    setAuthed(false);
+    setPass("");
+    onClose?.();
   };
 
   const logout = () => {
@@ -80,7 +89,16 @@ export default function AdminMenu() {
 
   if (!authed) {
     return (
-      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6 font-sans">
+      <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center p-6 font-sans gap-4">
+        {onClose && (
+          <button
+            type="button"
+            onClick={closeToKiosk}
+            className="self-start text-sm font-bold text-stone-500 hover:text-stone-800 uppercase tracking-widest"
+          >
+            ← Kembali ke Kiosk
+          </button>
+        )}
         <form
           onSubmit={submitPassword}
           className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-sm"
@@ -89,18 +107,27 @@ export default function AdminMenu() {
             <h1 className="text-xl font-black text-stone-800">Admin Menu Coworking</h1>
             <p className="text-sm text-stone-500">Masukkan sandi untuk melanjutkan.</p>
           </div>
-          <Input
-            type="password"
-            autoFocus
-            placeholder="Sandi admin"
-            value={pass}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              setPass(e.target.value);
-              setPassError(false);
-            }}
-            aria-invalid={passError}
-            className="bg-white"
-          />
+          <div className="relative">
+            <Input
+              type={shownPass ? "text" : "password"}
+              autoFocus
+              placeholder="Sandi admin"
+              value={pass}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                setPass(e.target.value);
+                setPassError(false);
+              }}
+              aria-invalid={passError}
+              className="bg-white pr-20"
+            />
+            <button
+              type="button"
+              onClick={() => setShownPass((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black uppercase tracking-widest text-stone-500 hover:text-stone-800"
+            >
+              {shownPass ? "Sembunyi" : "Lihat"}
+            </button>
+          </div>
           {passError && <p className="text-sm text-red-600">Sandi salah.</p>}
           <Button type="submit" className="w-full">
             Masuk
@@ -126,6 +153,11 @@ export default function AdminMenu() {
             <Button variant="outline" size="sm" onClick={resetAll} disabled={offCount === 0}>
               Aktifkan semua
             </Button>
+            {onClose && (
+              <Button variant="outline" size="sm" onClick={closeToKiosk}>
+                Kembali ke Kiosk
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={logout}>
               Keluar
             </Button>
