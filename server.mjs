@@ -36,10 +36,11 @@ app.use(async (req, res) => {
   const [base, upstreamPath] = resolve(req.originalUrl);
   const headers = { ...req.headers };
   headers.host = new URL(base).host;
-  delete headers.origin;
-  delete headers.referer;
-  delete headers['accept-encoding'];
-  delete headers['content-length'];
+  // Hop-by-hop headers harus dibuang: nginx selalu menambah Connection: upgrade + Upgrade
+  // di vhost ini, dan undici menolak ("invalid connection header") kalau diteruskan mentah.
+  for (const h of ['connection', 'upgrade', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'proxy-connection', 'proxy-authorization', 'origin', 'referer', 'accept-encoding', 'content-length']) {
+    delete headers[h];
+  }
 
   try {
     const upstream = await fetch(base + upstreamPath, {
