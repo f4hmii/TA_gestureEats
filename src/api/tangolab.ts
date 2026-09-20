@@ -133,7 +133,9 @@ export const buildOrderPayload = (
   return {
     customer_name: customerName,
     payment_method: "QRIS",
-    payment_status: "lunas",
+    // Backend menolak "lunas": pesanan eksternal selalu dibuat sebagai belum_bayar,
+    // pelunasan lewat endpoint payment-proof.
+    payment_status: "belum_bayar",
     total_price: total,
     external_id: externalId,
     source: "coworking",
