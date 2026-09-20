@@ -1,8 +1,9 @@
 // ponytail: satu-satunya alasan file ini ada — backend geasteats/smarttag tidak mengizinkan
-// origin kiosk (tidak ada Access-Control-Allow-Origin → diblok browser). Proxy same-origin
-// menghapus kebutuhan CORS sepenuhnya. Port langsung dari proxy di vite.config.ts.
+// origin kiosk (tidak ada Access-Control-Allow-Origin → browser blokir). Proxy same-origin
+// menghapus kebutuhan CORS. Aturan path sama persis dengan proxy dev di vite.config.ts.
 // skipped: caching, retry, websocket. Tambah kalau ada trafik nyata yang butuh.
-import http from 'node:http';
+import express from 'express';
+import path from 'node:path';
 
 const COWORKING = process.env.API_COWORKING || 'https://geasteats.ngolab.online';
 const NGOLAB = process.env.API_NGOLAB || 'https://smarttag.ngolab.online';
@@ -14,40 +15,39 @@ const resolve = (url) =>
     : url.startsWith('/api/coworking/') ? [COWORKING, url.replace('/api/coworking', '/api')]
       : [COWORKING, url]; // /api/* dan /uploads/* → coworking
 
-const read = (req) =>
-  new Promise((ok, no) => {
-    const chunks = [];
-    req.on('data', (d) => chunks.push(d));
-    req.on('end', () => ok(Buffer.concat(chunks)));
-    req.on('error', no);
-  });
+const app = express();
+app.use(express.static(path.resolve(process.cwd(), 'dist')));
 
-http
-  .createServer(async (req, res) => {
-    const [base, path] = resolve(req.url);
-    const headers = { ...req.headers };
-    // host wajib milik target (nginx vhost), origin dibuang supaya allowlist backend tidak menolak
-    headers.host = new URL(base).host;
-    delete headers.origin;
-    delete headers.referer;
-    delete headers['accept-encoding'];
-    delete headers['content-length'];
+// Proxy /api dan /uploads ke backend asli; semua header dari klien diteruskan apa adanya
+// (x-api-key ikut), kecuali host/origin supaya allowlist backend tidak menolak.
+app.use(async (req, res) => {
+  const [base, upstreamPath] = resolve(req.originalUrl);
+  const headers = { ...req.headers };
+  headers.host = new URL(base).host;
+  delete headers.origin;
+  delete headers.referer;
+  delete headers['accept-encoding'];
+  delete headers['content-length'];
 
-    try {
-      const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await read(req);
-      const upstream = await fetch(base + path, {
-        method: req.method,
-        headers,
-        body,
-        redirect: 'manual',
-      });
-      res.writeHead(upstream.status, {
-        'content-type': upstream.headers.get('content-type') || 'application/json',
-      });
-      res.end(Buffer.from(await upstream.arrayBuffer()));
-    } catch (err) {
-      res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: `proxy gagal: ${err.message}` }));
-    }
-  })
-  .listen(PORT, () => console.log(`kiosk api proxy listening on ${PORT}`));
+  try {
+    const upstream = await fetch(base + upstreamPath, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req,
+      duplex: 'half',
+      redirect: 'manual',
+    });
+    res.writeHead(upstream.status, {
+      'content-type': upstream.headers.get('content-type') || 'application/json',
+    });
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+  } catch (err) {
+    res.writeHead(502, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: `proxy gagal: ${err.message}` }));
+  }
+});
+
+// SPA fallback untuk route react-router
+app.get('*', (_req, res) => res.sendFile(path.resolve(process.cwd(), 'dist/index.html')));
+
+app.listen(PORT, () => console.log(`kiosk server on ${PORT}`));
