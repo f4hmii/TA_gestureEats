@@ -58,8 +58,9 @@ import {
 type MenuItem = Product;
 
 // --- Helper ---
-// BASE_URL kosong agar gambar relatif melewati Vite proxy (proxy → 192.168.1.10:3000)
-const BASE_URL = '';
+// /uploads (gambar menu + media idle promo) tidak boleh lewat origin kiosk: nginx site ini
+// melayani path itu sebagai static dari dist, jadi balas index.html bukan gambar.
+const BASE_URL = import.meta.env.VITE_AIRGESTURE_DOMAIN || import.meta.env.VITE_API_BASE_URL || '';
 
 const resolveImageUrl = (item: MenuItem): string => {
   const img = item.image || item.image_url;
@@ -82,10 +83,13 @@ const resolveImageUrl = (item: MenuItem): string => {
   }
   if (img.startsWith('http')) return img;
 
-  // Menggunakan base URL dinamis berdasarkan asal outlet produk
-  const coworkingBaseUrl = import.meta.env.VITE_AIRGESTURE_DOMAIN || import.meta.env.VITE_COWORKING_API_URL || '';
-  const ngolabBaseUrl = import.meta.env.VITE_KASIR_DOMAIN || import.meta.env.VITE_NGOLAB_API_URL || '';
-  const baseUrl = item.outlet?.toLowerCase() === 'ngolab' ? ngolabBaseUrl : coworkingBaseUrl;
+  // Absolut: foto menu ada di backend outlet masing-masing (VITE_*_DOMAIN).
+  // Fallback terakhir ke backend coworking, BUKAN IP lokal yang tak terpakai lagi.
+  const baseUrl =
+    (item.outlet?.toLowerCase() === 'ngolab'
+      ? import.meta.env.VITE_KASIR_DOMAIN || import.meta.env.VITE_NGOLAB_API_URL
+      : import.meta.env.VITE_AIRGESTURE_DOMAIN || import.meta.env.VITE_COWORKING_API_URL)
+    || import.meta.env.VITE_AIRGESTURE_DOMAIN || import.meta.env.VITE_API_BASE_URL || '';
 
   return `${baseUrl}${img}`;
 };
@@ -2112,7 +2116,7 @@ export default function App() {
                   {promo.image_url && (
                     <div className="w-20 h-20 rounded-2xl overflow-hidden shrink-0">
                       <img
-                        src={promo.image_url.startsWith('http') ? promo.image_url : `${import.meta.env.VITE_TANGOLAB_API_URL?.split('/api')[0] || 'http://192.168.1.10:3000'}${promo.image_url}`}
+                        src={promo.image_url.startsWith('http') ? promo.image_url : `${BASE_URL}${promo.image_url}`}
                         alt={promo.title}
                         className="w-full h-full object-cover"
                       />
