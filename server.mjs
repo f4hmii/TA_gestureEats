@@ -18,6 +18,18 @@ const resolve = (url) =>
 const app = express();
 app.use(express.static(path.resolve(process.cwd(), 'dist')));
 
+// Diagnosa: buktikan apakah runtime ini punya akses internet + DNS
+app.get('/__diag', async (_req, res) => {
+  const out = { env: { COWORKING, NGOLAB, port: PORT } };
+  try {
+    const r = await fetch(NGOLAB, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    out.https = `OK ${r.status}`;
+  } catch (e) {
+    out.https = `FAIL ${e.message}${e.cause ? ' / ' + e.cause.message : ''}`;
+  }
+  res.json(out);
+});
+
 // Proxy /api dan /uploads ke backend asli; semua header dari klien diteruskan apa adanya
 // (x-api-key ikut), kecuali host/origin supaya allowlist backend tidak menolak.
 app.use(async (req, res) => {
@@ -36,14 +48,17 @@ app.use(async (req, res) => {
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : req,
       duplex: 'half',
       redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
     });
     res.writeHead(upstream.status, {
       'content-type': upstream.headers.get('content-type') || 'application/json',
     });
     res.end(Buffer.from(await upstream.arrayBuffer()));
   } catch (err) {
+    const detail = `${err.message}${err.cause ? ' / ' + (err.cause.message || err.cause.code || err.cause) : ''}`;
+    console.error('proxy gagal', detail, base + upstreamPath);
     res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: `proxy gagal: ${err.message}` }));
+    res.end(JSON.stringify({ error: `proxy gagal: ${detail}` }));
   }
 });
 
