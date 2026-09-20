@@ -50,4 +50,6 @@ app.use(async (req, res) => {
 // SPA fallback untuk route react-router
 app.get('*', (_req, res) => res.sendFile(path.resolve(process.cwd(), 'dist/index.html')));
 
-app.listen(PORT, () => console.log(`kiosk server on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`kiosk server on ${PORT}`));
+process.on('uncaughtException', (e) => console.error('uncaught', e));
+process.on('unhandledRejection', (e) => console.error('unhandled', e));
