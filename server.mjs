@@ -2,12 +2,15 @@
 // origin kiosk (tidak ada Access-Control-Allow-Origin → browser blokir). Proxy same-origin
 // menghapus kebutuhan CORS. Aturan path sama persis dengan proxy dev di vite.config.ts.
 // skipped: caching, retry, websocket. Tambah kalau ada trafik nyata yang butuh.
+import 'dotenv/config'; // .env baru berlaku kalau dimuat; PM2 sudah menyuntik PORT=5007 yang beda dari runtime_port nginx (5024)
 import express from 'express';
 import path from 'node:path';
 
 const COWORKING = process.env.API_COWORKING || 'https://geasteats.ngolab.online';
 const NGOLAB = process.env.API_NGOLAB || 'https://smarttag.ngolab.online';
-const PORT = Number(process.env.PORT) || 3001;
+// ponytail: KIOSK_PORT, bukan PORT — nginx vhost mem-proxy ke runtime_port panel (5024).
+// skipped: auto-detect port. Ganti angka ini kalau runtime_port site diubah di panel.
+const PORT = Number(process.env.KIOSK_PORT) || 5024;
 
 // Aturan sama persis dengan proxy dev di vite.config.ts
 const resolve = (url) =>
