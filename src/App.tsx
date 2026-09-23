@@ -1379,7 +1379,7 @@ export default function App() {
                                   <h3 className="font-bold text-lg leading-tight text-stone-800 uppercase tracking-tight line-clamp-2">
                                     {item.name}
                                   </h3>
-                                  <p className="text-sm text-stone-500 line-clamp-2 leading-relaxed">
+                                  <p className="text-sm text-stone-500 truncate leading-relaxed">
                                     {item.description}
                                   </p>
                                 </div>
