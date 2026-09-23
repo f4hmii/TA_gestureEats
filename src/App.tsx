@@ -45,7 +45,6 @@ import {
 import { cn } from "@/lib/utils";
 import { getActiveMenus, isMenuAvailable } from "./api/menu";
 import { Product, User, Promotion, CoinPromo, AdminPromo } from "./types/api";
-import AdminMenu from "./AdminMenu";
 import { getPromotions, scanTag, getCoinPromos, createTangolabOrder, redeemCoinPromo, getAdminPromos, uploadPaymentProof, outletOfItem, apiPrefixForOutlet, buildOrderPayload } from "./api/tangolab";
 import {
   getActiveMedia,
@@ -381,7 +380,7 @@ export default function App() {
   const [menuItems, setMenuItems] = useState<Product[]>([]);
   const [dynamicCategories, setDynamicCategories] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('');
-  const [selectedOutlet, setSelectedOutlet] = useState<'all' | 'coworking' | 'ngolab'>('all');
+  const [selectedOutlet, setSelectedOutlet] = useState<'ngolab' | 'coworking'>('ngolab');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -395,7 +394,6 @@ export default function App() {
   const [promoIndex, setPromoIndex] = useState(0);
   const [showGestureHelp, setShowGestureHelp] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [showAdmin, setShowAdmin] = useState(false);
   const [showPrintNotification, setShowPrintNotification] = useState(false);
   const [promoMedia, setPromoMedia] = useState<Promotion[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -686,7 +684,7 @@ export default function App() {
   const filteredItems = useMemo(() =>
     menuItems.filter(item => {
       const matchCategory = !activeCategory || activeCategory.toLowerCase() === 'semua' || normalizeCategoryName(item.category).toLowerCase() === activeCategory.toLowerCase();
-      const matchOutlet = selectedOutlet === 'all' || !item.outlet || item.outlet.toLowerCase() === selectedOutlet.toLowerCase();
+      const matchOutlet = !item.outlet || item.outlet.toLowerCase() === selectedOutlet;
       return matchCategory && matchOutlet;
     }),
     [activeCategory, selectedOutlet, menuItems]
@@ -1088,19 +1086,7 @@ export default function App() {
         />
       </div>
 
-      {/* Halaman Admin (dibuka lewat klik jam di header) */}
-      <AnimatePresence>
-        {showAdmin && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-stone-100 overflow-y-auto"
-          >
-            <AdminMenu forceLogin onClose={() => setShowAdmin(false)} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Halaman Admin dilepas sementara: menunya dikelola langsung di server (Smart Tag / backend). */}
 
       {/* Idle Promotion Overlay */}
       <AnimatePresence>
@@ -1282,13 +1268,8 @@ export default function App() {
               <p className="text-[clamp(8px,0.8vw,12px)] text-stone-500 font-medium uppercase tracking-widest">Kiosk Pemesanan Mandiri</p>
             </div>
 
-            <div className="flex items-center gap-6">
-              <button
-                type="button"
-                onClick={() => setShowAdmin(true)}
-                title="Admin"
-                className="flex flex-col items-end rounded-2xl px-4 py-2 transition-all active:scale-95 hover:bg-stone-50"
-              >
+            <div className="flex items-center gap-6" title="Kelola menu dari server, bukan dari Kiosk">
+              <div className="flex flex-col items-end rounded-2xl px-4 py-2">
                 <p className="text-xs text-stone-400 font-black uppercase tracking-[0.2em] leading-none mb-1.5">
                   {currentTime.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
                 </p>
@@ -1298,7 +1279,7 @@ export default function App() {
                     {currentTime.getSeconds().toString().padStart(2, '0')}
                   </span>
                 </p>
-              </button>
+              </div>
             </div>
           </header>
 
@@ -1333,22 +1314,11 @@ export default function App() {
                     <span className="text-lg text-stone-400 font-bold">{filteredItems.length} items</span>
                   </div>
 
-                  {/* Outlet Filter Tabs */}
+                  {/* Outlet Filter Tabs — coworking disembunyikan sementara, menu hanya dari ngolab */}
                   <div className="flex gap-2 bg-stone-100 p-1.5 rounded-2xl border border-stone-200/50">
-                    {(['all', 'coworking', 'ngolab'] as const).map((outlet) => (
-                      <button
-                        key={outlet}
-                        onClick={() => setSelectedOutlet(outlet)}
-                        className={cn(
-                          "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all cursor-pointer",
-                          selectedOutlet === outlet
-                            ? "bg-white text-orange-600 shadow-sm"
-                            : "text-stone-400 hover:text-stone-600"
-                        )}
-                      >
-                        {outlet === 'all' ? 'Semua' : outlet === 'coworking' ? 'Coworking' : 'Ngolab'}
-                      </button>
-                    ))}
+                    <span className="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest bg-white text-orange-600 shadow-sm">
+                      Ngolab
+                    </span>
                   </div>
                 </div>
 

@@ -1,6 +1,10 @@
-import { apiClient } from './client';
 import { Product } from '../types/api';
-import { isMenuDisabled } from './menuAvailability';
+
+/**
+ * Outlet yang ditampilkan di Kiosk.
+ * Coworking dimatikan sementara — tambahkan 'coworking' ke daftar ini untuk mengaktifkan lagi.
+ */
+export const ACTIVE_OUTLETS: Array<'coworking' | 'ngolab'> = ['ngolab'];
 
 /**
  * Mengambil daftar semua menu/produk dari server
@@ -53,20 +57,8 @@ export const getMenusFromOutlet = async (outlet: 'coworking' | 'ngolab'): Promis
 };
 
 export const getMenus = async (): Promise<Product[]> => {
-  const [coworkingMenus, ngolabMenus] = await Promise.all([
-    getMenusFromOutlet('coworking'),
-    getMenusFromOutlet('ngolab')
-  ]);
-  
-  return [...coworkingMenus, ...ngolabMenus];
-};
-
-/**
- * Mengambil menu berdasarkan kategori
- */
-export const getMenusByCategory = async (category: string) => {
-  const allMenus = await getMenus();
-  return allMenus.filter(m => m.category.toLowerCase() === category.toLowerCase());
+  const lists = await Promise.all(ACTIVE_OUTLETS.map(getMenusFromOutlet));
+  return lists.flat();
 };
 
 /**
@@ -86,11 +78,8 @@ export const isMenuAvailable = (menu: Product): boolean =>
 export const getActiveMenus = async () => {
   const allMenus = await getMenus();
 
-  return allMenus.filter(menu => {
-    // Menu dinonaktifkan sementara dari halaman admin /ngolabadm
-    if (isMenuDisabled(menu.id)) return false;
-
+  return allMenus.filter(menu =>
     // Mengecek apakah menu diizinkan untuk ditampilkan
-    return menu.displayed === 1 || menu.displayed as unknown as boolean === true;
-  });
+    menu.displayed === 1 || menu.displayed as unknown as boolean === true
+  );
 };
